@@ -14,7 +14,7 @@ Player::Player(float x, float y) : GameObject(x, y) {
         std::cerr << "[BLAD SFML] Nie mozna znalezc: assets/player_walk.png !" << std::endl;
     }
 
-    // Wymiary klatek gołębia (48x48 px)
+    // Wymiary klatek gołębia 
     frameWidth = 32;
     frameHeight = 32;
     animationTimer = 0.f;
@@ -89,9 +89,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
 void Player::update(float dt, sf::RenderWindow& window) {
     updateAttack(dt, window);
-    
-    // --- TUTAJ JEST TWOJA ZMIENNA SKALI ---
-    // Zmień tę wartość (np. na 3.0f lub 4.0f), a gołąb zmieni rozmiar we wszystkich stanach!
+
     float skala = 4.0f;
 
     sf::Vector2f moveDir(0.f, 0.f);
