@@ -1,27 +1,46 @@
-//main loop - window, time, objects
-
 #ifndef GAME_H
 #define GAME_H
 
 #include <SFML/Graphics.hpp>
 #include <vector>
 #include <memory>
+#include <random>
 #include "GameObject.h"
+#include "Room.h"
 
 class Game {
 private:
-    sf::RenderWindow window; //window
-    sf::Clock clock; //delta time
-    std::vector<std::unique_ptr<GameObject>> objects; //objects (player, enemy etc.)
+    sf::RenderWindow window;
+    sf::Clock clock;
+    std::vector<std::unique_ptr<GameObject>> objects;
+    std::vector<Room> rooms;
+    int currentRoomIndex;
+    int enemiesRemainingToSpawn; 
 
-    void initWindow(); //window inicialization
-    void spawnEnemy(); 
+    std::mt19937 rng;
+
+    sf::RectangleShape doorShape;
+    bool wasEPressed;
+
+    bool isFullscreen;
+    bool wasF11Pressed;
+    void applyWindowMode();
+    void applyLetterboxView();
+
+    sf::Font font;
+    sf::Text roomText;
+    sf::Text interactText;
+
+    void initWindow();
+    void spawnEnemy();
+    void nextRoom();
+    void resetRun();
 
 public:
-    Game(); //constructor
-    void run(); //game runner
-    void update(float dt); //logic of the game
-    void render(); //visuals
+    Game();
+    void run();
+    void update(float dt);
+    void render();
 };
 
 #endif

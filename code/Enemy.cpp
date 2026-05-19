@@ -1,87 +1,137 @@
 #include "Enemy.h"
-#include <ctime> // For rand() support
+#include "Bullet.h"
+#include <cmath>
+#include <cstdlib>
 
-// Constructor: Initializes enemy stats, red rectangle shape, and HP bar colors/sizes
 Enemy::Enemy(float x, float y) : GameObject(x, y) {
-    maxHp = 3;
+    maxHp = 2; 
     hp = maxHp;
     isHit = false;
     hitTimer = 0.f;
 
-    // Set main visual properties of the enemy
-    shape.setSize(sf::Vector2f(40.f, 40.f));
+    shape.setSize(sf::Vector2f(9.f, 9.f));
     shape.setFillColor(sf::Color::Red);
+    shape.setOrigin(4.5f, 4.5f);
     shape.setPosition(position);
 
-    // Health bar background setup (gray rectangle)
-    hpBarBack.setSize(sf::Vector2f(40.f, 5.f));
+    hpBarBack.setSize(sf::Vector2f(9.f, 1.5f));
     hpBarBack.setFillColor(sf::Color(50, 50, 50));
+    hpBarBack.setOrigin(4.5f, 0.75f);
 
-    // Health bar foreground setup (green rectangle)
-    hpBarFront.setSize(sf::Vector2f(40.f, 5.f));
-    hpBarFront.setFillColor(sf::Color::Green);
-}
-
-// Resets health status and teleports the enemy to a random location inside the window
-void Enemy::respawn() {
-    hp = maxHp;
-    isHit = false;
-    hitTimer = 0.f;
-
-    // Restore full green health bar and default red color
-    hpBarFront.setSize(sf::Vector2f(40.f, 5.f));
-    shape.setFillColor(sf::Color::Red);
-
-    // Randomize new coordinates using standard modulo limits
-    position.x = static_cast<float>(rand() % 1100 + 50);
-    position.y = static_cast<float>(rand() % 600 + 50);
+    hpBarFront.setSize(sf::Vector2f(9.f, 1.5f));
+    hpBarFront.setFillColor(sf::Color::Red);
+    hpBarFront.setOrigin(4.5f, 0.75f);
+    state = EnemyState::CHASE;
+    moveSpeed = 40.f;       
+    strafeSpeed = 0.f;  
+    shootRange = 140.f;      
     
-    shape.setPosition(position);
+    shootCooldown = 2.2f; 
+    shootTimer = shootCooldown * (static_cast<float>(rand()) / RAND_MAX);
+    
+    strafeSign = (rand() % 2 == 0) ? 1 : -1;
 }
 
-// Inflicts damage, handles death-to-respawn shift, and scales the health bar width
 void Enemy::takeDamage(int damage) {
-    // Only apply damage if the enemy is not currently in its temporary invulnerability window
     if (!isHit) {
         hp -= damage;
         isHit = true;
-        hitTimer = 0.2f; // Set duration for the invulnerability/hit-flash state
+        hitTimer = 0.2f;
 
         if (hp <= 0) {
-            // Respawn instantly instead of deleting the object from memory
-            respawn();
+            destroy();
         } else {
-            // Scale the green health bar length proportionally to remaining HP
-            float hpPercent = static_cast<float>(hp) / static_cast<float>(maxHp);
-            hpBarFront.setSize(sf::Vector2f(40.f * hpPercent, 5.f));
+            float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
+            hpBarFront.setSize(sf::Vector2f(9.f * pct, 1.5f));
         }
     }
 }
 
-// Updates hit timers, alternates flashing colors, and anchors the UI to the enemy's coordinates
-void Enemy::update(float dt, sf::RenderWindow& window) {
+void Enemy::update(float, sf::RenderWindow& ) {}
+
+void Enemy::updateAI(float dt, sf::Vector2f playerPos,
+                     std::vector<std::unique_ptr<GameObject>>& spawnQueue)
+{
+    if (!isActive()) return;
+
     if (isHit) {
         hitTimer -= dt;
         if (hitTimer <= 0.f) {
             isHit = false;
-            shape.setFillColor(sf::Color::Red); // Return to default color
+            shape.setFillColor(sf::Color::Red);
         } else {
-            shape.setFillColor(sf::Color::White); // Flash white to visually indicate damage taken
+            shape.setFillColor(sf::Color::White);
         }
     }
 
-    // Keep the health bars hovering directly above the enemy shape
-    hpBarBack.setPosition(position.x, position.y - 12.f);
-    hpBarFront.setPosition(position.x, position.y - 12.f);
-    
-    shape.setPosition(position); // Apply current coordinates to the sprite shape
+    sf::Vector2f toPlayer = playerPos - position;
+    float dist = std::sqrt(toPlayer.x * toPlayer.x + toPlayer.y * toPlayer.y);
+
+    if (dist < 70.f) {
+        state = EnemyState::RETREAT;
+    } 
+    else if (state == EnemyState::RETREAT && dist >= 100.f) {
+        state = EnemyState::STRAFE;
+    } 
+    else if (state == EnemyState::CHASE && dist <= shootRange) {
+        state = EnemyState::STRAFE;
+    } else if (state == EnemyState::STRAFE && dist > shootRange * 1.2f) {
+        state = EnemyState::CHASE; 
+    }
+
+    sf::Vector2f desiredMove(0.f, 0.f);
+
+    if (state == EnemyState::RETREAT) {
+        if (dist > 0.f) {
+            desiredMove = (-toPlayer / dist) * moveSpeed; 
+        }
+    } 
+    else if (state == EnemyState::CHASE) {
+        if (dist > 0.f)
+            desiredMove = (toPlayer / dist) * moveSpeed;
+    } 
+
+    sf::Vector2f avoidWallForce(0.f, 0.f);
+    float margin = 35.f;        
+    float pushStrength = 50.f;  
+
+    if (position.x < margin) avoidWallForce.x += (margin - position.x) / margin * pushStrength;
+    if (position.x > 400.f - margin) avoidWallForce.x -= (position.x - (400.f - margin)) / margin * pushStrength;
+    if (position.y < margin) avoidWallForce.y += (margin - position.y) / margin * pushStrength;
+    if (position.y > 225.f - margin) avoidWallForce.y -= (position.y - (225.f - margin)) / margin * pushStrength;
+
+    desiredMove += avoidWallForce;
+    position += desiredMove * dt;
+
+    if (position.x < 10.f)  position.x = 10.f;
+    if (position.x > 390.f) position.x = 390.f;
+    if (position.y < 10.f)  position.y = 10.f;
+    if (position.y > 215.f) position.y = 215.f;
+
+    if ((state == EnemyState::STRAFE || state == EnemyState::RETREAT) && dist >= 60.f) {
+        shootTimer -= dt;
+        if (shootTimer <= 0.f) {
+            shootTimer = shootCooldown;
+            sf::Vector2f baseDirection = playerPos - position;
+            float offsetX = (static_cast<float>(rand()) / RAND_MAX) * 30.f - 15.f;
+            float offsetY = (static_cast<float>(rand()) / RAND_MAX) * 30.f - 15.f;
+            
+            sf::Vector2f inaccurateDirection = baseDirection + sf::Vector2f(offsetX, offsetY);
+
+            spawnQueue.push_back(
+                std::make_unique<Bullet>(position.x, position.y, inaccurateDirection, 100.f, true));
+        }
+    }
+
+    shape.setPosition(position);
+    float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
+    hpBarBack.setPosition(position.x, position.y - 8.f);
+    hpBarFront.setPosition(position.x - (4.5f * (1.f - pct)), position.y - 8.f);
 }
 
-// Draws the main enemy body and its health bars if active
 void Enemy::draw(sf::RenderWindow& window) {
-    if (active) {
-        window.draw(shape);
-        window.draw(hpBarBack);
-        window.draw(hpBarFront);
-    }
+    if (!isActive()) return;
+    window.draw(shape);
+    window.draw(hpBarBack);
+    window.draw(hpBarFront);
 }
