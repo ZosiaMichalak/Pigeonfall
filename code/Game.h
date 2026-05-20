@@ -7,6 +7,9 @@
 #include <random>
 #include "GameObject.h"
 #include "Room.h"
+#include "Enemy.h"
+#include "BulletEnemy.h"
+#include "DashEnemy.h"
 
 class Game {
 private:
@@ -15,7 +18,7 @@ private:
     std::vector<std::unique_ptr<GameObject>> objects;
     std::vector<Room> rooms;
     int currentRoomIndex;
-    int enemiesRemainingToSpawn; 
+    int enemiesRemainingToSpawn;
 
     std::mt19937 rng;
 
@@ -35,6 +38,7 @@ private:
     void spawnEnemy();
     void nextRoom();
     void resetRun();
+    void refreshFontTextures();
 
 public:
     Game();

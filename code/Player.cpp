@@ -5,32 +5,26 @@ void Player::setAnim(AnimState next, int frames, float dur,
                      sf::Texture& tex, int cols, int rows)
 {
     if (currentAnim == next) return;
-
     currentAnim    = next;
     maxColumns     = frames;
     frameDuration  = dur;
     sheetCols      = cols;
     currentColumn  = 0;
     animationTimer = 0.f;
-
     sprite.setTexture(tex);
     sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
     applyFacingScale();
-    (void)rows; 
+    (void)rows;
 }
-
 
 Player::Player(float x, float y) : GameObject(x, y) {
     hasIdleTexture   = textureIdle.loadFromFile("assets/player_idle.png");
     hasWalkTexture   = textureWalk.loadFromFile("assets/player_walk.png");
     hasAttackTexture = textureAttack.loadFromFile("assets/player_attack.png");
 
-    if (!hasIdleTexture)
-        std::cerr << "[BLAD] assets/player_idle.png not found\n";
-    if (!hasWalkTexture)
-        std::cerr << "[BLAD] assets/player_walk.png not found\n";
-    if (!hasAttackTexture)
-        std::cerr << "[BLAD] assets/player_attack.png not found\n";
+    if (!hasIdleTexture)   std::cerr << "[BLAD] assets/player_idle.png not found\n";
+    if (!hasWalkTexture)   std::cerr << "[BLAD] assets/player_walk.png not found\n";
+    if (!hasAttackTexture) std::cerr << "[BLAD] assets/player_attack.png not found\n";
 
     maxHp = 5; hp = maxHp;
     isInvincible = false; invincibilityTimer = 0.f;
@@ -70,13 +64,19 @@ Player::Player(float x, float y) : GameObject(x, y) {
     isDashing = false;
     dashDuration = 0.2f; dashCooldown = 1.0f; dashCooldownTimer = 0.f;
 
-    isAttacking = false;
-    attackDuration = 0.20f; 
-    attackCooldown = 0.4f; attackCooldownTimer = 0.f;
-    attackAngle = 0.f; attackTimer = 0.f;
+    isAttacking          = false;
+    attackDuration       = 0.20f;
+    attackCooldownTimer  = 0.f;
+    attackAngle          = 0.f;
+    attackTimer          = 0.f;
 
-    swordHitbox.setSize(sf::Vector2f(36.f, 32.f));
-    swordHitbox.setFillColor(sf::Color(255, 255, 255, 0)); 
+    comboCount       = 0;
+    comboWindowTimer = 0.f;
+    comboWindowOpen  = false;
+    pendingDamage    = 1;
+
+    swordHitbox.setSize(sf::Vector2f(20.f, 32.f));
+    swordHitbox.setFillColor(sf::Color(255, 255, 255, 0));
     swordHitbox.setOrigin(0.f, 16.f);
 }
 
@@ -110,18 +110,40 @@ void Player::takeDamage(int amount) {
 void Player::updateAttack(float dt, sf::RenderWindow& window) {
     if (attackCooldownTimer > 0.f) attackCooldownTimer -= dt;
 
+    if (comboWindowOpen) {
+        comboWindowTimer -= dt;
+        if (comboWindowTimer <= 0.f) {
+            comboWindowOpen = false;
+            comboCount      = 0;
+        }
+    }
+
     if (sf::Mouse::isButtonPressed(sf::Mouse::Left)
         && !isAttacking
         && attackCooldownTimer <= 0.f)
     {
-        isAttacking         = true;
-        attackTimer         = attackDuration;
-        currentColumn       = 0; 
-        attackCooldownTimer = attackCooldown;
+        comboCount = (comboCount % COMBO_FINISHER_HIT) + 1;
+
+        bool isFinisher = (comboCount == COMBO_FINISHER_HIT);
+
+        pendingDamage = isFinisher ? 2 : 1;
+
+        attackCooldownTimer = isFinisher ? ATTACK_COOLDOWN_COMBO : ATTACK_COOLDOWN_NORMAL;
+
+        if (isFinisher) {
+            comboWindowOpen = false;
+            comboCount      = 0;
+        } else {
+            comboWindowOpen  = true;
+            comboWindowTimer = COMBO_WINDOW;
+        }
+
+        isAttacking   = true;
+        attackTimer   = attackDuration;
+        currentColumn = 0;
 
         sf::Vector2f delta = window.mapPixelToCoords(
             sf::Mouse::getPosition(window)) - position;
-
         attackAngle = std::atan2(delta.y, delta.x) * 180.f / 3.14159f;
         swordHitbox.setRotation(attackAngle);
         facingLeft = (delta.x < 0.f);
@@ -139,8 +161,8 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 }
 
 void Player::update(float dt, sf::RenderWindow& window) {
-
     updateAttack(dt, window);
+
     if (isInvincible) {
         invincibilityTimer -= dt;
         if (invincibilityTimer <= 0.f) {
@@ -151,19 +173,16 @@ void Player::update(float dt, sf::RenderWindow& window) {
         }
     }
 
-    float hpPercent = static_cast<float>(hp) / static_cast<float>(maxHp);
-    hpBarFront.setSize(sf::Vector2f(10.f * hpPercent, 1.5f));
-
     sf::Vector2f moveDir(0.f, 0.f);
     if (dashCooldownTimer > 0.f) dashCooldownTimer -= dt;
+
     if (isDashing) {
         position += dashDir * (speed * 3.f) * dt;
-        if (dashDir.x < 0.f)      { facingLeft = true; }
-        else if (dashDir.x > 0.f) { facingLeft = false; }
+        if (dashDir.x < 0.f)      facingLeft = true;
+        else if (dashDir.x > 0.f) facingLeft = false;
         dashTimer -= dt;
         if (dashTimer <= 0.f) isDashing = false;
-        applyFacingScale(); 
-
+        applyFacingScale();
     } else {
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) moveDir.y -= 1.f;
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) moveDir.y += 1.f;
@@ -173,32 +192,30 @@ void Player::update(float dt, sf::RenderWindow& window) {
         if (moveDir.x != 0 || moveDir.y != 0) {
             float len = std::sqrt(moveDir.x*moveDir.x + moveDir.y*moveDir.y);
             moveDir /= len;
-            position += moveDir * speed * dt; 
-            applyFacingScale(); 
+            position += moveDir * speed * dt;
+            applyFacingScale();
         } else {
-            applyFacingScale(); 
+            applyFacingScale();
         }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space))
             startDash(moveDir);
     }
+
     if (isAttacking) {
         if (hasAttackTexture)
             setAnim(AnimState::ATTACK, 5, 0.04f, textureAttack, 2, 3);
         else if (hasIdleTexture)
-            setAnim(AnimState::IDLE,   3, 0.15f, textureIdle,   2, 2);
-
+            setAnim(AnimState::IDLE, 3, 0.15f, textureIdle, 2, 2);
     } else if (isDashing) {
         if (hasWalkTexture)
             setAnim(AnimState::DASH, 6, 0.05f, textureWalk, 2, 3);
         else if (hasIdleTexture)
             setAnim(AnimState::IDLE, 3, 0.15f, textureIdle, 2, 2);
-
     } else if (moveDir.x != 0 || moveDir.y != 0) {
         if (hasWalkTexture)
             setAnim(AnimState::WALK, 6, 0.08f, textureWalk, 2, 3);
         else if (hasIdleTexture)
             setAnim(AnimState::IDLE, 3, 0.15f, textureIdle, 2, 2);
-
     } else {
         if (hasIdleTexture)
             setAnim(AnimState::IDLE, 3, 0.15f, textureIdle, 2, 2);
@@ -206,19 +223,19 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
     applyFacingScale();
 
+    float maxPlayerY = 225.f - 28.f - 12.f; 
 
-    if (position.x < 12.f)  position.x = 12.f;
-    if (position.x > 388.f) position.x = 388.f;
-    if (position.y < 12.f)  position.y = 12.f;
-    if (position.y > 213.f) position.y = 213.f;
+    if (position.x < 12.f)       position.x = 12.f;
+    if (position.x > 388.f)      position.x = 388.f;
+    if (position.y < 12.f)       position.y = 12.f;
+    if (position.y > maxPlayerY) position.y = maxPlayerY; 
 
     if (hasIdleTexture || hasWalkTexture || hasAttackTexture) {
         animationTimer += dt;
         if (animationTimer >= frameDuration) {
-            animationTimer -= frameDuration;  
+            animationTimer -= frameDuration;
             currentColumn = (currentColumn + 1) % maxColumns;
         }
-
         currentFrame.left = (currentColumn % sheetCols) * frameWidth;
         currentFrame.top  = (currentColumn / sheetCols) * frameHeight;
         sprite.setTextureRect(currentFrame);
@@ -226,18 +243,15 @@ void Player::update(float dt, sf::RenderWindow& window) {
     } else {
         fallbackShape.setPosition(position);
     }
-
-    hpBarBack.setPosition (position.x,                          position.y - 10.f);
-    hpBarFront.setPosition(position.x - (5.f * (1.f - hpPercent)), position.y - 10.f);
 }
 
 void Player::startDash(sf::Vector2f moveDir) {
     if (!isDashing && dashCooldownTimer <= 0.f) {
-        isDashing = true;
-        dashTimer = dashDuration;
+        isDashing         = true;
+        dashTimer         = dashDuration;
         dashCooldownTimer = dashCooldown;
         dashDir = (moveDir.x == 0 && moveDir.y == 0)
-                  ? (facingLeft ? sf::Vector2f(-1.f, 0.f) : sf::Vector2f(1.f, 0.f)) 
+                  ? (facingLeft ? sf::Vector2f(-1.f, 0.f) : sf::Vector2f(1.f, 0.f))
                   : moveDir;
     }
 }
@@ -247,7 +261,4 @@ void Player::draw(sf::RenderWindow& window) {
         window.draw(sprite);
     else
         window.draw(fallbackShape);
-
-    window.draw(hpBarBack);
-    window.draw(hpBarFront);
 }
