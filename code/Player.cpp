@@ -18,25 +18,6 @@ Player::Player(float x, float y) : GameObject(x, y) {
     hasWalkTexture   = textureWalk.loadFromFile("assets/player_walk.png");
     hasAttackTexture = textureAttack.loadFromFile("assets/player_attack.png");
 
-    // Smudge spritesheet: 2 cols x 2 rows = 4 frames, each 228x192 px
-    hasSmudgeTexture = textureSmudge.loadFromFile("assets/attack_smudge.png");
-    smudgeFrame      = 0;
-    smudgeFrameTimer = 0.f;
-    if (hasSmudgeTexture) {
-        textureSmudge.setSmooth(false);
-        smudgeSprite.setTexture(textureSmudge);
-        // Each frame is 228x192; display at ~32 game-units tall
-        sf::Vector2u ts = textureSmudge.getSize();
-        smudgeFrameW = static_cast<int>(ts.x) / 2;   // 228
-        smudgeFrameH = static_cast<int>(ts.y) / 2;   // 192
-        float scaleF = 32.f / static_cast<float>(smudgeFrameH);
-        smudgeScale  = scaleF;
-        smudgeSprite.setOrigin(smudgeFrameW / 2.f, smudgeFrameH / 2.f);
-        smudgeSprite.setScale(scaleF, scaleF);
-        // First frame
-        smudgeSprite.setTextureRect(sf::IntRect(0, 0, smudgeFrameW, smudgeFrameH));
-    }
-
     xp            = persistentXP;
     level         = persistentLevel;
     skillPoints   = persistentSkillPoints;
@@ -82,13 +63,15 @@ Player::Player(float x, float y) : GameObject(x, y) {
 
     isAttacking         = false;
     attackTimer         = 0.f;
-    attackDuration      = 0.25f;
+    attackDuration      = 0.16f;
     attackCooldownTimer = 0.f;
     attackCooldownMax   = 0.35f;
+    attackAngle         = 0.f;
 
-    swordHitbox.setSize({22.f, 28.f});
-    swordHitbox.setFillColor(sf::Color(255, 255, 255, 0));
-    swordHitbox.setOrigin(0.f, 14.f);
+    // Sword hitbox — visible white-ish rectangle, rotated toward mouse
+    swordHitbox.setSize(sf::Vector2f(26.f, 18.f));
+    swordHitbox.setFillColor(sf::Color(255, 255, 200, 130));
+    swordHitbox.setOrigin(0.f, 9.f);
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -176,7 +159,7 @@ sf::FloatRect Player::getBounds() const {
 }
 
 // ── Attack ────────────────────────────────────────────────────────────────────
-void Player::updateAttack(float dt) {
+void Player::updateAttack(float dt, sf::RenderWindow& window) {
     if (attackCooldownTimer > 0.f) attackCooldownTimer -= dt;
 
     if (sf::Mouse::isButtonPressed(sf::Mouse::Left) &&
@@ -186,54 +169,40 @@ void Player::updateAttack(float dt) {
         attackTimer         = attackDuration;
         attackCooldownTimer = attackCooldownMax;
 
-        // Reset smudge animation
-        smudgeFrame      = 0;
-        smudgeFrameTimer = 0.f;
+        // Calculate angle from player to mouse in world coordinates
+        sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+        sf::Vector2f delta    = mousePos - position;
+        attackAngle = std::atan2(delta.y, delta.x) * 180.f / PI;
 
+        // Update facing direction based on mouse side
+        facingLeft = (delta.x < 0.f);
+
+        // Switch to attack texture — only 2 frames, 3rd is empty
         if (hasAttackTexture) {
             currentAnim    = AnimState::ATTACK;
             sprite.setTexture(textureAttack);
             sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
             currentColumn  = 0;
             animationTimer = 0.f;
-            maxColumns     = 3;
+            maxColumns     = 2;
             sheetCols      = 3;
-            frameDuration  = attackDuration / 3.f;
+            frameDuration  = attackDuration / 2.f;
         }
     }
 
     if (isAttacking) {
         attackTimer -= dt;
 
-        // Advance smudge spritesheet: 4 frames spread across attackDuration
-        // Frame layout: row 0 = frames 0,1 | row 1 = frames 2,3
-        const int   SMUDGE_FRAMES = 4;
-        float smudgeFrameDur = attackDuration / static_cast<float>(SMUDGE_FRAMES);
-        smudgeFrameTimer += dt;
-        if (smudgeFrameTimer >= smudgeFrameDur) {
-            smudgeFrameTimer -= smudgeFrameDur;
-            smudgeFrame = std::min(smudgeFrame + 1, SMUDGE_FRAMES - 1);
-        }
-
-        if (hasSmudgeTexture) {
-            int col = smudgeFrame % 2;
-            int row = smudgeFrame / 2;
-            smudgeSprite.setTextureRect(sf::IntRect(
-                col * smudgeFrameW, row * smudgeFrameH,
-                smudgeFrameW, smudgeFrameH));
-
-            // Position: offset to the facing side, vertically centred on player
-            float offsetX = facingLeft ? -8.f : 8.f;
-            smudgeSprite.setPosition(position.x + offsetX, position.y);
-
-            // Flip horizontally when facing left
-            smudgeSprite.setScale(
-                facingLeft ? -smudgeScale : smudgeScale,
-                smudgeScale);
-        }
+        // Keep sword hitbox rotated toward the original attack angle
+        swordHitbox.setRotation(attackAngle);
+        float rad     = attackAngle * PI / 180.f;
+        float offsetX = std::cos(rad) * 12.f;
+        float offsetY = std::sin(rad) * 12.f;
+        swordHitbox.setPosition(position.x + offsetX, position.y + offsetY);
 
         if (attackTimer <= 0.f) {
             isAttacking = false;
+            // Return to idle texture
             if (hasIdleTexture) {
                 currentAnim    = AnimState::IDLE;
                 sprite.setTexture(textureIdle);
@@ -246,16 +215,11 @@ void Player::updateAttack(float dt) {
             }
         }
     }
-
-    // Sword hitbox offset to the facing side
-    float hx = facingLeft ? position.x - 22.f : position.x + 2.f;
-    swordHitbox.setPosition(hx, position.y);
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
 void Player::update(float dt, sf::RenderWindow& window) {
-    (void)window;
-    updateAttack(dt);
+    updateAttack(dt, window);
 
     if (isInvincible) {
         invincibilityTimer -= dt;
@@ -310,10 +274,6 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 void Player::draw(sf::RenderWindow& window) {
-    // Smudge drawn behind player sprite
-    if (isAttacking && hasSmudgeTexture)
-        window.draw(smudgeSprite);
-
     if (hasIdleTexture) {
         bool visible = !isInvincible ||
                        (static_cast<int>(invincibilityTimer / 0.1f) % 2 == 0);
@@ -322,6 +282,9 @@ void Player::draw(sf::RenderWindow& window) {
         fallbackShape.setPosition(position);
         window.draw(fallbackShape);
     }
+
+    // Sword hitbox drawn on top while attacking
+    if (isAttacking) window.draw(swordHitbox);
 }
 
 // ── Dash ──────────────────────────────────────────────────────────────────────

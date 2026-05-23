@@ -83,19 +83,12 @@ private:
     float attackCooldownTimer;
     float attackCooldownMax;
     int   attackDamage;
+    float attackAngle;          // angle toward mouse (degrees)
 
-    // Sword hitbox
+    // Sword hitbox — visible, rotated toward mouse
     sf::RectangleShape swordHitbox;
 
-    // Smudge attack effect — 2x2 spritesheet (4 frames, 228x192 each)
-    sf::Texture textureSmudge;
-    sf::Sprite  smudgeSprite;
-    bool        hasSmudgeTexture;
-    int         smudgeFrame;
-    float       smudgeFrameTimer;
-    int         smudgeFrameW;
-    int         smudgeFrameH;
-    float       smudgeScale;
+    void updateAttack(float dt, sf::RenderWindow& window);
 
     // HP
     int   hp;
@@ -113,7 +106,6 @@ private:
     std::array<int, SKILL_COUNT> upgradeLevels;
 
     void applySkillStats();
-    void updateAttack(float dt);
 
 public:
     Player(float x, float y);
