@@ -146,7 +146,8 @@ void Game::nextRoom() {
         newObjects.push_back(std::make_unique<Player>(20.f, 100.f));
     }
     objects = std::move(newObjects);
-    enemiesRemainingToSpawn = rooms[currentRoomIndex]->getEnemyCount();
+    // Scale total enemies with room number: 3 base, +1 every 2 rooms, max 10
+    enemiesRemainingToSpawn = std::min(3 + currentRoomIndex / 2, 10);
 }
 
 void Game::resetRun() {
@@ -387,23 +388,13 @@ void Game::update(float dt) {
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
 
     if (alive == 0 && enemiesRemainingToSpawn > 0) {
-        const auto& spawns = rooms[currentRoomIndex]->getEnemySpawns();
-        if (!spawns.empty()) {
-            for (const auto& s : spawns) {
-                if (s.type == EnemyType::DASH)
-                    objects.push_back(std::make_unique<DashEnemy>(s.position.x, s.position.y, s.tier));
-                else
-                    objects.push_back(std::make_unique<BulletEnemy>(s.position.x, s.position.y, s.tier));
-            }
-            enemiesRemainingToSpawn = 0;
-            alive = static_cast<int>(spawns.size());
-        } else {
-            int maxW = (currentRoomIndex >= 6) ? 4 : 3;
-            std::uniform_int_distribution<int> wsd(1, maxW);
-            int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
-            for (int i = 0; i < wc; ++i) { spawnEnemy(); enemiesRemainingToSpawn--; }
-            alive = wc;
-        }
+        // Wave size grows with room: 1-2 early, up to 4-5 late
+        int minW = 1;
+        int maxW = std::min(2 + currentRoomIndex / 3, 5);
+        std::uniform_int_distribution<int> wsd(minW, maxW);
+        int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
+        for (int i = 0; i < wc; ++i) { spawnEnemy(); enemiesRemainingToSpawn--; }
+        alive = wc;
     }
 
     bool cleared = (alive == 0 && enemiesRemainingToSpawn == 0);
