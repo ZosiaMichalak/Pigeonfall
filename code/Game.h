@@ -22,7 +22,7 @@ private:
     sf::Font         font;
 
     std::vector<std::unique_ptr<GameObject>> objects;
-    std::vector<Room> rooms;
+    std::vector<std::unique_ptr<Room>> rooms;
     int currentRoomIndex;
     int enemiesRemainingToSpawn;
 

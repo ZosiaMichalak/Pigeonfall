@@ -45,8 +45,8 @@ Game::Game()
     doorShape.setPosition(394.f, 100.f);
     doorShape.setFillColor(sf::Color(230, 180, 40));
 
-    rooms.push_back(Room(0, 0, sf::Color(20, 25, 40)));
-    rooms[0].loadAssets();
+    rooms.push_back(std::make_unique<Room>(0, 0, sf::Color(20, 25, 40)));
+    rooms[0]->loadAssets();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
 
@@ -124,8 +124,8 @@ void Game::nextRoom() {
     currentRoomIndex++;
     if (currentRoomIndex >= static_cast<int>(rooms.size())) {
         RoomTemplate tmpl = RoomTemplates::getRandom();
-        rooms.push_back(Room(currentRoomIndex, tmpl));
-        rooms.back().loadAssets();
+        rooms.push_back(std::make_unique<Room>(currentRoomIndex, tmpl));
+        rooms.back()->loadAssets();
     }
 
     std::vector<std::unique_ptr<GameObject>> newObjects;
@@ -138,14 +138,14 @@ void Game::nextRoom() {
         newObjects.push_back(std::make_unique<Player>(20.f, 100.f));
     }
     objects = std::move(newObjects);
-    enemiesRemainingToSpawn = rooms[currentRoomIndex].getEnemyCount();
+    enemiesRemainingToSpawn = rooms[currentRoomIndex]->getEnemyCount();
 }
 
 void Game::resetRun() {
     Player::resetRunStats();
     rooms.clear();
-    rooms.push_back(Room(0, 0, sf::Color(20, 25, 40)));
-    rooms[0].loadAssets();
+    rooms.push_back(std::make_unique<Room>(0, 0, sf::Color(20, 25, 40)));
+    rooms[0]->loadAssets();
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
     skillTree.close();
@@ -239,7 +239,7 @@ void Game::update(float dt) {
     // Push player out of prop colliders
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
-        for (const sf::FloatRect& col : rooms[currentRoomIndex].getPropColliders()) {
+        for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
             if (!pb.intersects(col)) continue;
 
             // Find smallest overlap axis and push out
@@ -349,7 +349,7 @@ void Game::update(float dt) {
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
 
     if (alive == 0 && enemiesRemainingToSpawn > 0) {
-        const auto& spawns = rooms[currentRoomIndex].getEnemySpawns();
+        const auto& spawns = rooms[currentRoomIndex]->getEnemySpawns();
         if (!spawns.empty()) {
             for (const auto& s : spawns) {
                 if (s.type == EnemyType::DASH)
@@ -369,7 +369,7 @@ void Game::update(float dt) {
     }
 
     bool cleared = (alive == 0 && enemiesRemainingToSpawn == 0);
-    rooms[currentRoomIndex].setCleared(cleared);
+    rooms[currentRoomIndex]->setCleared(cleared);
     doorShape.setFillColor(cleared ? sf::Color(230, 180, 40) : sf::Color(70, 70, 70));
 
     // Door interaction
@@ -387,7 +387,7 @@ void Game::render() {
     window.clear(sf::Color::Black);
 
     // Background + props (handles bg texture or fallback colour internally)
-    rooms[currentRoomIndex].draw(window);
+    rooms[currentRoomIndex]->draw(window);
 
     window.draw(doorShape);
 
@@ -398,10 +398,10 @@ void Game::render() {
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
 
     hud.renderSkillsHint(window, playerPtr);
-    hud.render(window, playerPtr, rooms[currentRoomIndex].getId());
+    hud.render(window, playerPtr, rooms[currentRoomIndex]->getId());
 
     // "E" prompt near door when room is cleared
-    if (playerPtr && rooms[currentRoomIndex].getIsCleared()) {
+    if (playerPtr && rooms[currentRoomIndex]->getIsCleared()) {
         sf::Vector2f pp = getRectCenter(playerPtr->getBounds());
         sf::Vector2f dp = doorShape.getPosition();
         float dx = pp.x - dp.x, dy = pp.y - dp.y;

@@ -216,7 +216,9 @@ void Player::setPosition(const sf::Vector2f& newPos) {
 }
 
 sf::FloatRect Player::getBounds() const {
-    if (hasIdleTexture) return sprite.getGlobalBounds();
+    constexpr float W = 23.f, H = 21.f;
+    if (hasIdleTexture)
+        return { position.x - W / 2.f, position.y - H / 2.f, W, H };
     return fallbackShape.getGlobalBounds();
 }
 
