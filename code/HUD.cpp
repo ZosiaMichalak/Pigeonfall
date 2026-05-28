@@ -7,20 +7,25 @@
 static constexpr float BAR_Y = 195.f;
 static constexpr float BAR_H = 30.f;
 
+// Funkcja pomocnicza zaokrąglająca do najbliższego pełnego piksela
 static inline float px(float v) { return std::floor(v + 0.5f); }
 
 static void sharpFont(sf::Font& font) {
-    for (unsigned sz : {12u, 14u, 16u})
+    // Zachowujemy wyłączenie wygładzania dla kluczowych rozmiarów w teksturze
+    for (unsigned sz : {9u, 12u, 13u, 14u, 16u, 18u, 20u, 24u})
         const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
 }
 
 HUD::HUD(sf::Font& font) : font(font), coinIconFrame(0), coinIconTimer(0.f) {
+    sharpFont(font);
+    
+    // Zawsze używamy natywnego rozmiaru dla m5x7, czyli 16, by uniknąć zniekształceń!
     roomText.setFont(font);
-    roomText.setCharacterSize(14);
+    roomText.setCharacterSize(16); 
     roomText.setFillColor(sf::Color(200, 200, 200));
 
     coinText.setFont(font);
-    coinText.setCharacterSize(14);
+    coinText.setCharacterSize(16);
     coinText.setFillColor(sf::Color(255, 210, 30));
 
     hasCoinIcon = coinIconTexture.loadFromFile("assets/coin.png");
@@ -31,150 +36,120 @@ HUD::HUD(sf::Font& font) : font(font), coinIconFrame(0), coinIconTimer(0.f) {
     }
 }
 
-float HUD::drawCooldownBox(sf::RenderWindow& window, float bx, float by,
-                            const std::string& label, float progress,
-                            sf::Color fillReady, sf::Color fillWait)
-{
-    const float BW = 14.f, BH = 14.f;
-    bx = px(bx - BW);
-
-    sf::RectangleShape back({BW, BH});
-    back.setFillColor(sf::Color(30, 30, 38));
-    back.setOutlineThickness(1.f);
-    back.setOutlineColor(sf::Color(60, 60, 72));
-    back.setPosition(bx, px(by));
-    window.draw(back);
-
-    float fillH = px(BH * std::max(0.f, std::min(1.f, progress)));
-    if (fillH > 0.f) {
-        sf::RectangleShape fill({BW, fillH});
-        fill.setFillColor(progress >= 1.f ? fillReady : fillWait);
-        fill.setPosition(bx, px(by + BH - fillH));
-        window.draw(fill);
-    }
-
-    sf::Text lbl(label, font, 10);
-    lbl.setFillColor(sf::Color(160, 160, 160));
-    lbl.setPosition(px(bx - 1.f), px(by - 12.f));
-    window.draw(lbl);
-
-    return bx - 8.f;
-}
-
-void HUD::render(sf::RenderWindow& window, Player* p, int roomId, int coins) {
+void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins) {
     sharpFont(font);
+    
+    // 1. Tło dolnego paska HUD
+    sf::RectangleShape bar({400.f, BAR_H});
+    bar.setFillColor(sf::Color(10, 12, 22));
+    bar.setPosition(0.f, px(BAR_Y));
+    window.draw(bar);
 
-    // ── Advance coin icon animation ───────────────────────────────────────────
-    coinIconTimer += 1.f / 60.f; // approximate; real dt not passed here
-    if (coinIconTimer >= COIN_FRAME_DUR) {
-        coinIconTimer -= COIN_FRAME_DUR;
-        coinIconFrame = (coinIconFrame + 1) % COIN_FRAMES;
-        if (hasCoinIcon) {
-            int col = coinIconFrame % COIN_SHEET_COLS;
-            int row = coinIconFrame / COIN_SHEET_COLS;
-            coinIcon.setTextureRect(
-                sf::IntRect(col * COIN_FRAME_W, row * COIN_FRAME_H, COIN_FRAME_W, COIN_FRAME_H));
+    // Krawędź oddzielająca świat gry od HUD
+    sf::RectangleShape line({400.f, 1.f});
+    line.setFillColor(sf::Color(40, 45, 60));
+    line.setPosition(0.f, px(BAR_Y));
+    window.draw(line);
+
+    // Pozycja startowa dla elementów po prawej stronie
+    float rightSideX = 330.f;
+
+    // 2. Statystyki gracza (HP, LVL, XP)
+    if (player && player->isActive()) {
+        Player* p = player;
+
+        // Pasek Życia (HP) - rysowany najpierw jako tło
+        float hpPct = (p->getMaxHp() > 0) ? std::min(1.f, static_cast<float>(p->getHp()) / p->getMaxHp()) : 0.f;
+
+        sf::RectangleShape hpBack({80.f, 8.f});
+        hpBack.setFillColor(sf::Color(60, 20, 20));
+        hpBack.setPosition(10.f, px(BAR_Y + 4.f));
+        window.draw(hpBack);
+
+        if (hpPct > 0.f) {
+            sf::RectangleShape hpFill({px(80.f * hpPct), 8.f});
+            hpFill.setFillColor(sf::Color(220, 40, 40));
+            hpFill.setPosition(10.f, px(BAR_Y + 4.f));
+            window.draw(hpFill);
+        }
+
+        // Tekst HP - WYOSTTRZONY I WYŚRODKOWANY (Natywny rozmiar 16, przeskalowany do połowy)
+        sf::Text hpText(std::to_string(p->getHp()) + "/" + std::to_string(p->getMaxHp()), font, 16);
+        hpText.setScale(0.5f, 0.5f);
+        hpText.setFillColor(sf::Color::White);
+        
+        // getGlobalBounds jest kluczowe, bo użyliśmy setScale!
+        sf::FloatRect hpTextBounds = hpText.getGlobalBounds();
+        float hpTextX = px(10.f + (80.f - hpTextBounds.width) / 2.f);
+        float hpTextY = px(BAR_Y + 2.f);
+        hpText.setPosition(hpTextX, hpTextY);
+        window.draw(hpText);
+
+        // Tekst Poziomu (LVL) - rozmiar 16, skalowany do 0.75 by wyglądał jak dawne 12
+        sf::Text lvlText("LVL: " + std::to_string(p->getLevel()), font, 16);
+        lvlText.setScale(0.75f, 0.75f);
+        lvlText.setFillColor(sf::Color(200, 200, 200));
+        lvlText.setPosition(10.f, px(BAR_Y + 16.f));
+        window.draw(lvlText);
+
+        // Pasek Doświadczenia (XP)
+        float xpStartX = px(lvlText.getPosition().x + lvlText.getGlobalBounds().width + 10.f);
+        float xpWidth  = px(rightSideX - xpStartX - 15.f);
+
+        if (xpWidth > 20.f) {
+            sf::RectangleShape xpBack({xpWidth, 5.f});
+            xpBack.setFillColor(sf::Color(22, 18, 40));
+            xpBack.setPosition(xpStartX, px(BAR_Y + 22.f));
+            window.draw(xpBack);
+
+            float xpPct = (p->getXPToNext() > 0)
+                        ? std::min(1.f, static_cast<float>(p->getXP()) / p->getXPToNext()) : 0.f;
+
+            if (xpPct > 0.f) {
+                sf::RectangleShape xpFill({px(xpWidth * xpPct), 5.f});
+                xpFill.setFillColor(sf::Color(50, 220, 100));
+                xpFill.setPosition(xpStartX, px(BAR_Y + 22.f));
+                window.draw(xpFill);
+            }
         }
     }
 
-    // ── 1. Room label – top-right ─────────────────────────────────────────────
-    roomText.setString("ROOM " + std::to_string(roomId + 1));
-    float roomTextX = px(395.f - roomText.getLocalBounds().width);
-    roomText.setPosition(roomTextX, 0.f);
+    // 3. Numer pokoju oraz Monetki
+    roomText.setString("ROOM: " + std::to_string(roomId));
+    roomText.setPosition(px(rightSideX), px(BAR_Y - 2.f)); // Lekko podniesione dla rozmiaru 16
     window.draw(roomText);
 
-    // ── 2. Coin counter – top-right, one line below room label ───────────────
-    //   [icon] [count]  right-aligned under ROOM label
-    std::string coinStr = std::to_string(coins);
-    coinText.setString(coinStr);
-
-    // Position: align right edge of coin text with right edge of room text
-    float coinTextW  = coinText.getLocalBounds().width;
-    float coinLineY  = px(10.f); // just below the room text (14px font)
-    float coinTextX  = px(395.f - coinTextW);
-
-    coinText.setPosition(coinTextX, coinLineY);
-    window.draw(coinText);
-
-    // Coin icon left of the number
+    coinText.setString(std::to_string(coins));
     if (hasCoinIcon) {
-        float iconX = px(coinTextX - COIN_FRAME_W - 2.f);
-        float iconY = px(coinLineY + 6.f + (coinText.getLocalBounds().height / 2.f)
-                         - COIN_FRAME_H / 2.f);
-        coinIcon.setPosition(iconX, iconY);
+        int tx = (coinIconFrame % COIN_SHEET_COLS) * COIN_FRAME_W;
+        int ty = (coinIconFrame / COIN_SHEET_COLS) * COIN_FRAME_H;
+        coinIcon.setTextureRect(sf::IntRect(tx, ty, COIN_FRAME_W, COIN_FRAME_H));
+        
+        coinIcon.setPosition(px(rightSideX), px(BAR_Y + 18.f));
+        coinText.setPosition(px(rightSideX + 12.f), px(BAR_Y + 10.f));
+        
         window.draw(coinIcon);
     } else {
-        // Fallback: yellow square
-        sf::RectangleShape fallback({6.f, 6.f});
-        fallback.setFillColor(sf::Color(255, 210, 30));
-        fallback.setPosition(px(coinTextX - 9.f), px(coinLineY + 2.f));
-        window.draw(fallback);
+        coinText.setPosition(px(rightSideX), px(BAR_Y + 14.f));
     }
+    window.draw(coinText);
 
-    // ── 3. HUD bar background ─────────────────────────────────────────────────
-    sf::RectangleShape bar({400.f, BAR_H});
-    bar.setFillColor(sf::Color(10, 10, 16));
-    bar.setPosition(0.f, BAR_Y);
-    window.draw(bar);
-
-    if (!p) return;
-
-    // ── 4. HP row ─────────────────────────────────────────────────────────────
-    sf::Text hpLbl("HP", font, 14);
-    hpLbl.setFillColor(sf::Color(200, 70, 70));
-    hpLbl.setPosition(5.f, BAR_Y - 2.f);
-    window.draw(hpLbl);
-
-    for (int i = 0; i < p->getMaxHp(); ++i) {
-        sf::RectangleShape heart({8.f, 8.f});
-        heart.setFillColor(i < p->getHp() ? sf::Color(210, 45, 45) : sf::Color(40, 20, 20));
-        heart.setPosition(px(25.f + i * 11.f), BAR_Y + 4.f);
-        window.draw(heart);
-    }
-
-    // ── 5. LVL + XP + cooldowns row ──────────────────────────────────────────
-    sf::Text lvlText("LVL " + std::to_string(p->getLevel()), font, 14);
-    lvlText.setFillColor(sf::Color(140, 100, 230));
-    lvlText.setPosition(5.f, BAR_Y + 11.f);
-    window.draw(lvlText);
-
-    float rightAnchor = 395.f;
-    float boxY        = BAR_Y + 10.f;
-
-    float atkT    = p->getAttackCooldownTimer(), atkM = p->getAttackCooldownMax();
-    float atkProg = (atkM > 0.f) ? std::min(1.f, std::max(0.f, 1.f - atkT / atkM)) : 1.f;
-    rightAnchor   = drawCooldownBox(window, rightAnchor, boxY, "ATK", atkProg,
-                                    sf::Color(230, 190, 25), sf::Color(100, 80, 10));
-
-    float dshT    = p->getDashCooldownTimer(), dshM = p->getDashCooldownMax();
-    float dshProg = (dshM > 0.f) ? std::min(1.f, std::max(0.f, 1.f - dshT / dshM)) : 1.f;
-    rightAnchor   = drawCooldownBox(window, rightAnchor, boxY, "DSH", dshProg,
-                                    sf::Color(35, 170, 220), sf::Color(15, 70, 100));
-
-    // XP bar
-    float xpStartX = lvlText.getPosition().x + lvlText.getLocalBounds().width + 10.f;
-    float xpWidth  = rightAnchor - xpStartX - 5.f;
-
-    if (xpWidth > 20.f) {
-        sf::RectangleShape xpBack({xpWidth, 5.f});
-        xpBack.setFillColor(sf::Color(22, 18, 40));
-        xpBack.setPosition(xpStartX, BAR_Y + 18.f);
-        window.draw(xpBack);
-
-        float xpPct = (p->getXPToNext() > 0)
-                    ? std::min(1.f, static_cast<float>(p->getXP()) / p->getXPToNext()) : 0.f;
-        sf::RectangleShape xpFill({xpWidth * xpPct, 5.f});
-        xpFill.setFillColor(sf::Color(90, 50, 200));
-        xpFill.setPosition(xpStartX, BAR_Y + 18.f);
-        window.draw(xpFill);
+    // 4. [M] Skills hint
+    if (player && player->isActive()) {
+        bool hasPoints = player->getSkillPoints() > 0;
+        sf::Text skillsHint("[M] Skills", font, 16);
+        skillsHint.setScale(0.75f, 0.75f); // Skalowanie symulujące rozmiar 12
+        skillsHint.setFillColor(hasPoints ? sf::Color(255, 210, 30) : sf::Color(120, 120, 120));
+        
+        sf::FloatRect hintBounds = skillsHint.getGlobalBounds();
+        skillsHint.setPosition(
+            px((400.f - hintBounds.width) / 2.f),
+            px(BAR_Y + 1.f)
+        );
+        window.draw(skillsHint);
     }
 }
 
-void HUD::renderSkillsHint(sf::RenderWindow& window, Player* p) {
-    if (!p) return;
-    sharpFont(font);
-    sf::Text hint("[M] SKILLS", font, 14);
-    hint.setFillColor(p->getSkillPoints() > 0 ? sf::Color(255, 215, 50) : sf::Color(100, 80, 160));
-    hint.setPosition(px(4.f), px(0.f));
-    window.draw(hint);
+void HUD::renderSkillsHint(sf::RenderWindow& window, Player* player) {
+    // Usunięto kod rysujący podpowiedź skilli (rysowana w render() dla uproszczenia układu)
 }

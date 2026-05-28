@@ -67,7 +67,15 @@ std::vector<RoomTemplate> getAll() {
     {},
     {{PropDef::Type::HYDRANT, {297.f, 65.f}}, {PropDef::Type::FLOWERS, {113.f, 57.f}}, {PropDef::Type::BENCH, {81.f, 55.f}}, {PropDef::Type::CAR1, {171.f, 108.f}}, {PropDef::Type::CAR3, {319.f, 0.f}}},
     {400.f, 120.f},0.f
+},
+
+{
+    "1", 0,
+    {{EnemyType::BULLET, {35.f, 170.f}, 1}, {EnemyType::BULLET, {370.f, 173.f}, 1}, {EnemyType::BULLET, {115.f, 17.f}, 1}, {EnemyType::BULLET, {327.f, 22.f}, 1}, {EnemyType::DASH, {367.f, 102.f}, 1}, {EnemyType::DASH, {36.f, 92.f}, 1}},
+    {{PropDef::Type::FLOWERS, {224.f, 24.f}}, {PropDef::Type::FLOWERS, {264.f, 24.f}}, {PropDef::Type::HYDRANT, {136.f, 107.f}}, {PropDef::Type::CAR1, {218.f, 104.f}}, {PropDef::Type::CAR2, {219.f, 135.f}}, {PropDef::Type::BENCH, {35.f, 22.f}}, {PropDef::Type::TRASH, {66.f, 22.f}}, {PropDef::Type::VENDING, {357.f, 4.f}}},
+    {191.f, 2.f}, 90.f
 }
+
 
 
     };
@@ -76,8 +84,14 @@ std::vector<RoomTemplate> getAll() {
 RoomTemplate getRandom() {
     static std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
     auto all = getAll();
-    // Exclude the last entry (StartRoom) from random selection
-    std::uniform_int_distribution<int> dis(0, static_cast<int>(all.size()) - 2);
+    
+    // Zabezpieczenie na wypadek, gdyby w tabeli był tylko 1 pokój
+    if (all.size() <= 1) {
+        return all[0];
+    }
+    
+    // Pomijamy indeks 0 ("Starter Room") i losujemy od indeksu 1 do samego końca
+    std::uniform_int_distribution<int> dis(1, static_cast<int>(all.size()) - 1);
     return all[dis(rng)];
 }
 
