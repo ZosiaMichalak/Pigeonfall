@@ -19,7 +19,7 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 Game::Game()
-    : hud(font), skillTree(font)
+    : hud(font), skillTree(font), totalCoins(0)
 {
     isFullscreen  = false;
     wasF11Pressed = false;
@@ -49,11 +49,11 @@ Game::Game()
 
     auto templates = RoomTemplates::getAll();
 
-    Vending::loadTexture(); 
+    Vending::loadTexture();
     Trash::loadTexture();
+    Coin::loadTexture();
 
-    rooms.push_back(std::make_unique<Room>(0, templates[5])); 
-    
+    rooms.push_back(std::make_unique<Room>(0, templates[5]));
     rooms[0]->loadAssets();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
@@ -84,11 +84,11 @@ void Game::applyLetterboxView() {
     sf::View view(sf::FloatRect(0.f, 0.f, VIEW_W, VIEW_H));
     sf::FloatRect vp(0.f, 0.f, 1.f, 1.f);
     if (wr > vr) {
-        float px = (1.f - vr / wr) / 2.f;
-        vp = { px, 0.f, vr / wr, 1.f };
+        float p = (1.f - vr / wr) / 2.f;
+        vp = { p, 0.f, vr / wr, 1.f };
     } else {
-        float py = (1.f - wr / vr) / 2.f;
-        vp = { 0.f, py, 1.f, wr / vr };
+        float p = (1.f - wr / vr) / 2.f;
+        vp = { 0.f, p, 1.f, wr / vr };
     }
     view.setViewport(vp);
     window.setView(view);
@@ -156,6 +156,7 @@ void Game::resetRun() {
     rooms[0]->loadAssets();
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
+    totalCoins              = 0;
     skillTree.close();
     objects.clear();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
@@ -177,7 +178,7 @@ void Game::run() {
                 }
 
                 if (skillTree.isOpen()) {
-                    if (event.key.code == sf::Keyboard::Up   ||
+                    if (event.key.code == sf::Keyboard::Up ||
                         event.key.code == sf::Keyboard::W)
                         skillTree.moveSelection(-1);
 
@@ -220,7 +221,7 @@ void Game::update(float dt) {
         }
     }
 
-    // Toggle skill tree (M key) — pauses game logic while open
+    // Toggle skill tree (M key)
     bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::M);
     if (mNow && !wasMPressed) skillTree.toggle();
     wasMPressed = mNow;
@@ -237,7 +238,7 @@ void Game::update(float dt) {
                 enemy->updateAI(dt, getRectCenter(playerPtr->getBounds()), spawnQueue);
     }
 
-    // Keep player above the HUD bar
+    // Keep player above HUD bar
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         if (pb.top + pb.height > UI_BAR_Y)
@@ -249,30 +250,30 @@ void Game::update(float dt) {
         sf::FloatRect pb = playerPtr->getBounds();
         for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
             if (!pb.intersects(col)) continue;
-
-            // Find smallest overlap axis and push out
             float overlapL = (pb.left + pb.width)  - col.left;
             float overlapR = (col.left + col.width) - pb.left;
             float overlapT = (pb.top  + pb.height)  - col.top;
             float overlapB = (col.top + col.height)  - pb.top;
-
             float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
             float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
-
             sf::Vector2f centre = getRectCenter(pb);
             if (std::abs(minH) < std::abs(minV))
                 playerPtr->setPosition({centre.x + minH, centre.y});
             else
                 playerPtr->setPosition({centre.x, centre.y + minV});
-
-            pb = playerPtr->getBounds(); // refresh after push
+            pb = playerPtr->getBounds();
         }
     }
 
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
+    spawnQueue.clear();
 
     // ── Collisions ────────────────────────────────────────────────────────────
-    for (auto& objA : objects) {
+    // Use index + snapshot size: push_back inside the loop (coin drops) would
+    // invalidate a range-for iterator by reallocating the vector.
+    const int collisionCount = static_cast<int>(objects.size());
+    for (int idx = 0; idx < collisionCount; ++idx) {
+        auto& objA = objects[idx];
         if (!objA->isActive()) continue;
 
         if (playerPtr && playerPtr->isAttackingNow()) {
@@ -307,6 +308,14 @@ void Game::update(float dt) {
                     if (wasAlive && !enemy->isActive()) {
                         int xpReward = dynamic_cast<DashEnemy*>(enemy) ? 3 : 2;
                         playerPtr->addXP(xpReward);
+
+                        // ── Drop coins ──────────────────────────────────────
+                        sf::Vector2f deathPos = getRectCenter(enemy->getBounds());
+                        int coinDrop = dynamic_cast<DashEnemy*>(enemy) ? 2 : 1;
+                        static std::uniform_real_distribution<float> scatter(-8.f, 8.f);
+                        for (int ci = 0; ci < coinDrop; ++ci)
+                            spawnQueue.push_back(std::make_unique<Coin>(
+                                deathPos.x + scatter(rng), deathPos.y + scatter(rng)));
                     }
                 }
             }
@@ -327,8 +336,17 @@ void Game::update(float dt) {
                         if (e->isActive() && e->getBounds().intersects(bullet->getBounds())) {
                             bool wasAlive = e->isActive();
                             e->takeDamage(1);
-                            if (wasAlive && !e->isActive())
+                            if (wasAlive && !e->isActive()) {
                                 playerPtr->addXP(dynamic_cast<DashEnemy*>(e) ? 3 : 2);
+
+                                // ── Drop coins ──────────────────────────────
+                                sf::Vector2f deathPos = getRectCenter(e->getBounds());
+                                int coinDrop = dynamic_cast<DashEnemy*>(e) ? 2 : 1;
+                                static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
+                                for (int ci = 0; ci < coinDrop; ++ci)
+                                    spawnQueue.push_back(std::make_unique<Coin>(
+                                        deathPos.x + scatter2(rng), deathPos.y + scatter2(rng)));
+                            }
                             bullet->destroy();
                             break;
                         }
@@ -344,7 +362,19 @@ void Game::update(float dt) {
                     if (!playerPtr->isDashingNow())
                         playerPtr->takeDamage(1);
         }
+
+        // ── Coin pickup ───────────────────────────────────────────────────────
+        if (auto* coin = dynamic_cast<Coin*>(objA.get())) {
+            if (playerPtr && playerPtr->getBounds().intersects(coin->getBounds())) {
+                coin->destroy();
+                ++totalCoins;
+            }
+        }
     }
+
+    // Flush coins (and anything else) queued during collision loop
+    for (auto& o : spawnQueue) objects.push_back(std::move(o));
+    spawnQueue.clear();
 
     // Remove inactive objects
     objects.erase(
@@ -396,7 +426,6 @@ void Game::render() {
 
     rooms[currentRoomIndex]->draw(window);
 
-    // Update the door position dynamically based on the current room
     doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
     window.draw(doorShape);
 
@@ -407,7 +436,7 @@ void Game::render() {
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
 
     hud.renderSkillsHint(window, playerPtr);
-    hud.render(window, playerPtr, rooms[currentRoomIndex]->getId());
+    hud.render(window, playerPtr, rooms[currentRoomIndex]->getId(), totalCoins);
 
     // "E" prompt near door when room is cleared
     if (playerPtr && rooms[currentRoomIndex]->getIsCleared()) {

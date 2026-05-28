@@ -14,6 +14,7 @@
 #include "Player.h"
 #include "HUD.h"
 #include "SkillTreeUI.h"
+#include "Coin.h"
 
 class Game {
 private:
@@ -41,6 +42,9 @@ private:
     SkillTreeUI skillTree;
 
     bool wasMPressed;
+
+    // ── Coins ─────────────────────────────────────────────────────────────────
+    int totalCoins; // persists across rooms within a run
 
     void initWindow();
     void applyWindowMode();
