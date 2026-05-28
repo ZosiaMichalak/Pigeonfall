@@ -9,6 +9,7 @@ static constexpr float PI = 3.14159265f;
 int                          Player::persistentXP               = 0;
 int                          Player::persistentLevel            = 1;
 int                          Player::persistentSkillPoints      = 0;
+int                          Player::persistentXpToNext         = 10;
 std::array<int, SKILL_COUNT> Player::persistentUpgrades         = {0,0,0,0,0,0};
 bool                         Player::persistentSecondChanceUsed = false;
 
@@ -35,7 +36,7 @@ Player::Player(float x, float y) : GameObject(x, y) {
     level         = persistentLevel;
     skillPoints   = persistentSkillPoints;
     upgradeLevels = persistentUpgrades;
-    xpToNextLevel = 10;
+    xpToNextLevel = persistentXpToNext;
 
     isDead             = false;
     isInvincible       = false;
@@ -157,11 +158,12 @@ void Player::addXP(int amount) {
         level++;
         skillPoints++;
         xpToNextLevel = static_cast<int>(xpToNextLevel * 1.5f);
-        hp = maxHp;
+        // No HP restore on level-up
     }
     persistentXP          = xp;
     persistentLevel       = level;
     persistentSkillPoints = skillPoints;
+    persistentXpToNext    = xpToNextLevel;
 }
 
 bool Player::canBuySkill(int id) const {
@@ -202,6 +204,7 @@ bool Player::consumeSecondChance() {
 
 void Player::resetRunStats() {
     persistentSecondChanceUsed = false;
+    // XP, level, skillpoints and upgrades intentionally persist across deaths
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -274,6 +274,32 @@ void Game::update(float dt) {
         }
     }
 
+    // Push enemies out of prop colliders
+    const auto& propColliders = rooms[currentRoomIndex]->getPropColliders();
+    for (auto& obj : objects) {
+        auto* enemy = dynamic_cast<Enemy*>(obj.get());
+        if (!enemy || !enemy->isActive()) continue;
+        sf::FloatRect eb = enemy->getBounds();
+        for (const sf::FloatRect& col : propColliders) {
+            if (!eb.intersects(col)) continue;
+            float overlapL = (eb.left + eb.width)  - col.left;
+            float overlapR = (col.left + col.width) - eb.left;
+            float overlapT = (eb.top  + eb.height)  - col.top;
+            float overlapB = (col.top + col.height)  - eb.top;
+            float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
+            float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
+            sf::Vector2f centre = getRectCenter(eb);
+            sf::Vector2f newPos;
+            if (std::abs(minH) < std::abs(minV))
+                newPos = {centre.x + minH, centre.y};
+            else
+                newPos = {centre.x, centre.y + minV};
+            // Enemy stores position directly; nudge via shape position offset
+            enemy->nudgePosition(newPos - centre);
+            eb = enemy->getBounds();
+        }
+    }
+
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
     spawnQueue.clear();
 
@@ -322,9 +348,27 @@ void Game::update(float dt) {
                         sf::Vector2f deathPos = getRectCenter(enemy->getBounds());
                         int coinDrop = dynamic_cast<DashEnemy*>(enemy) ? 2 : 1;
                         static std::uniform_real_distribution<float> scatter(-8.f, 8.f);
-                        for (int ci = 0; ci < coinDrop; ++ci)
-                            spawnQueue.push_back(std::make_unique<Coin>(
-                                deathPos.x + scatter(rng), deathPos.y + scatter(rng)));
+                        auto findOpenCoinPos = [&](sf::Vector2f base) -> sf::Vector2f {
+                            static const sf::Vector2f offsets[] = {
+                                {0,0},{12,0},{-12,0},{0,12},{0,-12},
+                                {12,12},{-12,12},{12,-12},{-12,-12},{20,0},{-20,0}
+                            };
+                            sf::FloatRect test{base.x-5.f, base.y-5.f, 10.f, 10.f};
+                            for (auto& off : offsets) {
+                                test.left = base.x + off.x - 5.f;
+                                test.top  = base.y + off.y - 5.f;
+                                bool blocked = false;
+                                for (const sf::FloatRect& col : propColliders)
+                                    if (test.intersects(col)) { blocked = true; break; }
+                                if (!blocked) return {base.x + off.x, base.y + off.y};
+                            }
+                            return base;
+                        };
+                        for (int ci = 0; ci < coinDrop; ++ci) {
+                            sf::Vector2f raw(deathPos.x + scatter(rng), deathPos.y + scatter(rng));
+                            sf::Vector2f safe = findOpenCoinPos(raw);
+                            spawnQueue.push_back(std::make_unique<Coin>(safe.x, safe.y));
+                        }
                     }
                 }
             }
@@ -332,6 +376,15 @@ void Game::update(float dt) {
 
         // Bullet hits player or deflected bullet hits enemy
         if (auto* bullet = dynamic_cast<Bullet*>(objA.get())) {
+            // Bullets are blocked by props
+            for (const sf::FloatRect& col : propColliders) {
+                if (bullet->getBounds().intersects(col)) {
+                    bullet->destroy();
+                    break;
+                }
+            }
+            if (!bullet->isActive()) continue;
+
             if (bullet->isFromEnemy()) {
                 if (playerPtr && playerPtr->getBounds().intersects(bullet->getBounds())) {
                     if (!playerPtr->isDashingNow()) {
@@ -352,9 +405,27 @@ void Game::update(float dt) {
                                 sf::Vector2f deathPos = getRectCenter(e->getBounds());
                                 int coinDrop = dynamic_cast<DashEnemy*>(e) ? 2 : 1;
                                 static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
-                                for (int ci = 0; ci < coinDrop; ++ci)
-                                    spawnQueue.push_back(std::make_unique<Coin>(
-                                        deathPos.x + scatter2(rng), deathPos.y + scatter2(rng)));
+                                auto findOpenCoinPos2 = [&](sf::Vector2f base) -> sf::Vector2f {
+                                    static const sf::Vector2f offsets[] = {
+                                        {0,0},{12,0},{-12,0},{0,12},{0,-12},
+                                        {12,12},{-12,12},{12,-12},{-12,-12},{20,0},{-20,0}
+                                    };
+                                    sf::FloatRect test{base.x-5.f, base.y-5.f, 10.f, 10.f};
+                                    for (auto& off : offsets) {
+                                        test.left = base.x + off.x - 5.f;
+                                        test.top  = base.y + off.y - 5.f;
+                                        bool blocked = false;
+                                        for (const sf::FloatRect& col : propColliders)
+                                            if (test.intersects(col)) { blocked = true; break; }
+                                        if (!blocked) return {base.x + off.x, base.y + off.y};
+                                    }
+                                    return base;
+                                };
+                                for (int ci = 0; ci < coinDrop; ++ci) {
+                                    sf::Vector2f raw(deathPos.x + scatter2(rng), deathPos.y + scatter2(rng));
+                                    sf::Vector2f safe = findOpenCoinPos2(raw);
+                                    spawnQueue.push_back(std::make_unique<Coin>(safe.x, safe.y));
+                                }
                             }
                             bullet->destroy();
                             break;

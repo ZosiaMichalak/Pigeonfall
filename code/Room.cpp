@@ -74,7 +74,16 @@ std::vector<RoomTemplate> getAll() {
     {{EnemyType::BULLET, {35.f, 170.f}, 1}, {EnemyType::BULLET, {370.f, 173.f}, 1}, {EnemyType::BULLET, {115.f, 17.f}, 1}, {EnemyType::BULLET, {327.f, 22.f}, 1}, {EnemyType::DASH, {367.f, 102.f}, 1}, {EnemyType::DASH, {36.f, 92.f}, 1}},
     {{PropDef::Type::FLOWERS, {224.f, 24.f}}, {PropDef::Type::FLOWERS, {264.f, 24.f}}, {PropDef::Type::HYDRANT, {136.f, 107.f}}, {PropDef::Type::CAR1, {218.f, 104.f}}, {PropDef::Type::CAR2, {219.f, 135.f}}, {PropDef::Type::BENCH, {35.f, 22.f}}, {PropDef::Type::TRASH, {66.f, 22.f}}, {PropDef::Type::VENDING, {357.f, 4.f}}},
     {191.f, 2.f}, 90.f
+},
+
+{
+    "2", 1,
+    {{EnemyType::BULLET, {254.f, 54.f}, 1}, {EnemyType::BULLET, {280.f, 121.f}, 1}, {EnemyType::BULLET, {259.f, 169.f}, 1}, {EnemyType::DASH, {111.f, 46.f}, 1}, {EnemyType::DASH, {162.f, 119.f}, 1}, {EnemyType::DASH, {125.f, 169.f}, 1}},
+    {{PropDef::Type::BENCH, {186.f, 24.f}}, {PropDef::Type::CAR1, {329.f, 1.f}}, {PropDef::Type::HYDRANT, {163.f, 33.f}}, {PropDef::Type::CAR3, {329.f, 179.f}}, {PropDef::Type::CAR2, {327.f, 81.f}}},
+    {191.f, 191.f}, 90.f
 }
+
+
 
 
 

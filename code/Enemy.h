@@ -32,6 +32,7 @@ public:
 
     bool          getIsHit()  const { return isHit; }
     sf::FloatRect getBounds() const { return shape.getGlobalBounds(); }
+    void          nudgePosition(sf::Vector2f delta) { position += delta; shape.setPosition(position); }
 };
 
 #endif

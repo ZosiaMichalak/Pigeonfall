@@ -39,6 +39,7 @@ private:
     static int                          persistentXP;
     static int                          persistentLevel;
     static int                          persistentSkillPoints;
+    static int                          persistentXpToNext;
     static std::array<int, SKILL_COUNT> persistentUpgrades;
     static bool                         persistentSecondChanceUsed;
 
