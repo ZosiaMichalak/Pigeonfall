@@ -215,8 +215,9 @@ void Player::setPosition(const sf::Vector2f& newPos) {
     else                fallbackShape.setPosition(position);
 }
 
+//Hitbox
 sf::FloatRect Player::getBounds() const {
-    constexpr float W = 23.f, H = 21.f;
+    constexpr float W = 16.f, H = 14.f;
     if (hasIdleTexture)
         return { position.x - W / 2.f, position.y - H / 2.f, W, H };
     return fallbackShape.getGlobalBounds();
@@ -380,6 +381,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 void Player::draw(sf::RenderWindow& window) {
+    // 1. Rysowanie gracza (Twój istniejący kod)
     if (hasIdleTexture) {
         bool visible = !isInvincible ||
                        (static_cast<int>(invincibilityTimer / 0.1f) % 2 == 0);
@@ -392,11 +394,10 @@ void Player::draw(sf::RenderWindow& window) {
     if (isAttacking) {
         if (hasSlashTexture) {
             window.draw(slashSprite);
-        } else {
-            // Rysuje hitbox tylko jeśli tekstura slasha się nie wczytała
-            window.draw(swordHitbox);
         }
     }
+
+    
 }
 
 // ── Dash ──────────────────────────────────────────────────────────────────────

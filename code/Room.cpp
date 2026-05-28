@@ -54,7 +54,7 @@ std::vector<RoomTemplate> getAll() {
         {
             "Corridor", 0,
             {{EnemyType::BULLET, {200.f, 100.f}, 0}, {EnemyType::BULLET, {300.f, 80.f}, 0}},
-            {{PropDef::Type::TRASH, {50.f, 150.f}}, {PropDef::Type::VENDING, {320.f, 140.f}}},
+            {{PropDef::Type::TRASH, {50.f, 150.f}}, {PropDef::Type::VENDING, {0.f, 0.f}}},
             {394.f, 100.f}
         },
         {
@@ -66,7 +66,7 @@ std::vector<RoomTemplate> getAll() {
         {
             "Showdown", 2,
             {{EnemyType::BULLET, {180.f, 90.f}, 1}, {EnemyType::BULLET, {280.f, 110.f}, 1}, {EnemyType::DASH, {230.f, 60.f}, 2}},
-            {{PropDef::Type::VENDING, {60.f, 140.f}}, {PropDef::Type::VENDING, {300.f, 145.f}}},
+            {{PropDef::Type::VENDING, {0.f, 0.f}}, {PropDef::Type::VENDING, {100.f, 100.f}}},
             {394.f, 100.f}
         },
         {
@@ -78,9 +78,16 @@ std::vector<RoomTemplate> getAll() {
         {
             "Crossfire", 1,
             {{EnemyType::BULLET, {100.f, 100.f}, 1}, {EnemyType::DASH, {320.f, 100.f}, 1}},
-            {{PropDef::Type::TRASH, {180.f, 150.f}}, {PropDef::Type::VENDING, {240.f, 145.f}}},
+            {{PropDef::Type::TRASH, {180.f, 150.f}}, {PropDef::Type::VENDING, {0.f, 0.f}}},
             {394.f, 100.f}
         },
+
+            {
+        "StartRoom", 0, // ID tła
+        {}, // Brak wrogów na start
+        {{PropDef::Type::TRASH, {200.f, 110.f}}}, // Vending na środku
+        {394.f, 100.f}
+        }
     };
 }
 

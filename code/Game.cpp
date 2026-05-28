@@ -1,6 +1,8 @@
 #include "Game.h"
 #include "Bullet.h"
 #include "Room.h"
+#include "Vending.h"
+#include "Trash.h"
 #include <algorithm>
 #include <ctime>
 #include <cmath>
@@ -45,7 +47,13 @@ Game::Game()
     doorShape.setPosition(394.f, 100.f);
     doorShape.setFillColor(sf::Color(230, 180, 40));
 
-    rooms.push_back(std::make_unique<Room>(0, 0, sf::Color(20, 25, 40)));
+    auto templates = RoomTemplates::getAll();
+
+    Vending::loadTexture(); 
+    Trash::loadTexture();
+
+    rooms.push_back(std::make_unique<Room>(0, templates[5])); 
+    
     rooms[0]->loadAssets();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }

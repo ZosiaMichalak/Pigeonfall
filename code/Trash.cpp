@@ -19,9 +19,9 @@ Trash::Trash(sf::Vector2f pos) : position(pos) {
 }
 
 void Trash::draw(sf::RenderWindow& window) {
-    window.draw(sprite);
+    window.draw(sprite);    
 }
 
 sf::FloatRect Trash::getBounds() const {
-    return { position.x, position.y, 22.f, 28.f };
+    return { position.x + 5.f, position.y + 4.f, 22.f, 28.f };
 }

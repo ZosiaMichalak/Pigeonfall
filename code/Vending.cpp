@@ -11,8 +11,10 @@ void Vending::loadTexture() {
     texture.loadFromFile("assets/vending.png");
 }
 
-void Vending::draw(sf::RenderWindow& window) { window.draw(sprite); }
+void Vending::draw(sf::RenderWindow& window) { 
+    window.draw(sprite);   
+}
 
 sf::FloatRect Vending::getBounds() const {
-    return { position.x, position.y, 52.f, 67.f };
+    return { position.x + 3.f, position.y + 1.f, 52.f, 67.f };
 }
