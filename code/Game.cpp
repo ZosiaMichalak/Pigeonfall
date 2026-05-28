@@ -1,5 +1,6 @@
 #include "Game.h"
 #include "Bullet.h"
+#include "Room.h"
 #include <algorithm>
 #include <ctime>
 #include <cmath>
@@ -45,6 +46,7 @@ Game::Game()
     doorShape.setFillColor(sf::Color(230, 180, 40));
 
     rooms.push_back(Room(0, 0, sf::Color(20, 25, 40)));
+    rooms[0].loadAssets();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
 
@@ -121,13 +123,9 @@ void Game::spawnEnemy() {
 void Game::nextRoom() {
     currentRoomIndex++;
     if (currentRoomIndex >= static_cast<int>(rooms.size())) {
-        int depthBonus = currentRoomIndex / 3;
-        int minC = std::min(3 + depthBonus, 8);
-        int maxC = std::min(6 + depthBonus, 12);
-        std::uniform_int_distribution<int> ecd(minC, maxC);
-        std::uniform_int_distribution<int> col(15, 45);
-        rooms.push_back(Room(currentRoomIndex, ecd(rng),
-                             sf::Color(col(rng), col(rng), col(rng))));
+        RoomTemplate tmpl = RoomTemplates::getRandom();
+        rooms.push_back(Room(currentRoomIndex, tmpl));
+        rooms.back().loadAssets();
     }
 
     std::vector<std::unique_ptr<GameObject>> newObjects;
@@ -147,6 +145,7 @@ void Game::resetRun() {
     Player::resetRunStats();
     rooms.clear();
     rooms.push_back(Room(0, 0, sf::Color(20, 25, 40)));
+    rooms[0].loadAssets();
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
     skillTree.close();
@@ -237,6 +236,31 @@ void Game::update(float dt) {
             playerPtr->setPosition({getRectCenter(pb).x, UI_BAR_Y - pb.height / 2.f});
     }
 
+    // Push player out of prop colliders
+    if (playerPtr && playerPtr->isActive()) {
+        sf::FloatRect pb = playerPtr->getBounds();
+        for (const sf::FloatRect& col : rooms[currentRoomIndex].getPropColliders()) {
+            if (!pb.intersects(col)) continue;
+
+            // Find smallest overlap axis and push out
+            float overlapL = (pb.left + pb.width)  - col.left;
+            float overlapR = (col.left + col.width) - pb.left;
+            float overlapT = (pb.top  + pb.height)  - col.top;
+            float overlapB = (col.top + col.height)  - pb.top;
+
+            float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
+            float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
+
+            sf::Vector2f centre = getRectCenter(pb);
+            if (std::abs(minH) < std::abs(minV))
+                playerPtr->setPosition({centre.x + minH, centre.y});
+            else
+                playerPtr->setPosition({centre.x, centre.y + minV});
+
+            pb = playerPtr->getBounds(); // refresh after push
+        }
+    }
+
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
 
     // ── Collisions ────────────────────────────────────────────────────────────
@@ -325,11 +349,23 @@ void Game::update(float dt) {
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
 
     if (alive == 0 && enemiesRemainingToSpawn > 0) {
-        int maxW = (currentRoomIndex >= 6) ? 4 : 3;
-        std::uniform_int_distribution<int> wsd(1, maxW);
-        int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
-        for (int i = 0; i < wc; ++i) { spawnEnemy(); enemiesRemainingToSpawn--; }
-        alive = wc;
+        const auto& spawns = rooms[currentRoomIndex].getEnemySpawns();
+        if (!spawns.empty()) {
+            for (const auto& s : spawns) {
+                if (s.type == EnemyType::DASH)
+                    objects.push_back(std::make_unique<DashEnemy>(s.position.x, s.position.y, s.tier));
+                else
+                    objects.push_back(std::make_unique<BulletEnemy>(s.position.x, s.position.y, s.tier));
+            }
+            enemiesRemainingToSpawn = 0;
+            alive = static_cast<int>(spawns.size());
+        } else {
+            int maxW = (currentRoomIndex >= 6) ? 4 : 3;
+            std::uniform_int_distribution<int> wsd(1, maxW);
+            int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
+            for (int i = 0; i < wc; ++i) { spawnEnemy(); enemiesRemainingToSpawn--; }
+            alive = wc;
+        }
     }
 
     bool cleared = (alive == 0 && enemiesRemainingToSpawn == 0);
@@ -350,10 +386,8 @@ void Game::update(float dt) {
 void Game::render() {
     window.clear(sf::Color::Black);
 
-    // Floor
-    sf::RectangleShape bg({VIEW_W, VIEW_H});
-    bg.setFillColor(rooms[currentRoomIndex].getFloorColor());
-    window.draw(bg);
+    // Background + props (handles bg texture or fallback colour internally)
+    rooms[currentRoomIndex].draw(window);
 
     window.draw(doorShape);
 
