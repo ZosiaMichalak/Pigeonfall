@@ -17,6 +17,19 @@ Player::Player(float x, float y) : GameObject(x, y) {
     hasIdleTexture   = textureIdle.loadFromFile("assets/player_idle.png");
     hasWalkTexture   = textureWalk.loadFromFile("assets/player_walk.png");
     hasAttackTexture = textureAttack.loadFromFile("assets/player_attack.png");
+    hasDashTexture   = textureDash.loadFromFile("assets/player_dash.png");
+    
+    // Wczytanie slasha
+    hasSlashTexture = slashTexture.loadFromFile("assets/slash.png");
+    if (hasSlashTexture) {
+        slashSprite.setTexture(slashTexture);
+        slashMaxFrames = 6;
+        slashCols = 2;
+        slashFrameWidth = 32;
+        slashFrameHeight = 32;
+        // Origin na środku lewej krawędzi (oryginalne ustawienie)
+        slashSprite.setOrigin(0.f, slashFrameHeight / 2.f); 
+    }
 
     xp            = persistentXP;
     level         = persistentLevel;
@@ -33,13 +46,14 @@ Player::Player(float x, float y) : GameObject(x, y) {
     applySkillStats();
     hp = maxHp;
 
-    frameWidth     = 32;
+    // Start w stanie IDLE
+    frameWidth     = 51;
     frameHeight    = 32;
     animationTimer = 0.f;
-    frameDuration  = 0.15f;
+    frameDuration  = 0.18f;
     currentColumn  = 0;
     maxColumns     = 3;
-    sheetCols      = 2;
+    sheetCols      = 1;
     currentAnim    = AnimState::IDLE;
 
     if (hasIdleTexture) {
@@ -63,15 +77,63 @@ Player::Player(float x, float y) : GameObject(x, y) {
 
     isAttacking         = false;
     attackTimer         = 0.f;
-    attackDuration      = 0.16f;
+    attackDuration      = 0.32f;
     attackCooldownTimer = 0.f;
     attackCooldownMax   = 0.35f;
     attackAngle         = 0.f;
 
-    // Sword hitbox — visible white-ish rectangle, rotated toward mouse
+    // Niewidzialny hitbox
     swordHitbox.setSize(sf::Vector2f(26.f, 18.f));
     swordHitbox.setFillColor(sf::Color(255, 255, 200, 130));
     swordHitbox.setOrigin(0.f, 9.f);
+}
+
+// ── Animation state switch ────────────────────────────────────────────────────
+void Player::setAnim(AnimState anim) {
+    if (currentAnim == anim) return;
+    currentAnim    = anim;
+    currentColumn  = 0;
+    animationTimer = 0.f;
+
+    switch (anim) {
+    case AnimState::IDLE:
+        if (!hasIdleTexture) return;
+        sprite.setTexture(textureIdle);
+        frameWidth = 51; frameHeight = 32;
+        maxColumns = 3;  
+        sheetCols  = 1; // 1 kolumna (pionowy pasek)
+        frameDuration = 0.18f;
+        break;
+
+    case AnimState::WALK:
+        if (!hasWalkTexture) { setAnim(AnimState::IDLE); return; }
+        sprite.setTexture(textureWalk);
+        frameWidth = 51; frameHeight = 32;
+        maxColumns = 6;  
+        sheetCols  = 2; // 2 kolumny
+        frameDuration = 0.1f;
+        break;
+
+    case AnimState::DASH:
+        if (!hasDashTexture) return;
+        sprite.setTexture(textureDash);
+        frameWidth = 51; frameHeight = 32;
+        maxColumns = 8;  
+        sheetCols  = 2; // 2 kolumny
+        frameDuration = dashDuration / 8.f;
+        break;
+
+    case AnimState::ATTACK:
+        if (!hasAttackTexture) return;
+        sprite.setTexture(textureAttack);
+        frameWidth = 51; frameHeight = 32;
+        maxColumns = 5;  
+        sheetCols  = 2; // 2 kolumny
+        frameDuration = attackDuration / 5.f;
+        break;
+    }
+
+    sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -169,50 +231,69 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
         attackTimer         = attackDuration;
         attackCooldownTimer = attackCooldownMax;
 
-        // Calculate angle from player to mouse in world coordinates
         sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
         sf::Vector2f delta    = mousePos - position;
         attackAngle = std::atan2(delta.y, delta.x) * 180.f / PI;
+        facingLeft  = (delta.x < 0.f);
 
-        // Update facing direction based on mouse side
-        facingLeft = (delta.x < 0.f);
-
-        // Switch to attack texture — only 2 frames, 3rd is empty
-        if (hasAttackTexture) {
-            currentAnim    = AnimState::ATTACK;
-            sprite.setTexture(textureAttack);
-            sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
-            currentColumn  = 0;
-            animationTimer = 0.f;
-            maxColumns     = 2;
-            sheetCols      = 3;
-            frameDuration  = attackDuration / 2.f;
-        }
+        setAnim(AnimState::ATTACK);
     }
 
     if (isAttacking) {
         attackTimer -= dt;
 
-        // Keep sword hitbox rotated toward the original attack angle
+        float rad = attackAngle * PI / 180.f;
+
+        // ZAWSZE aktualizuj niewidzialny hitbox do kolizji
         swordHitbox.setRotation(attackAngle);
-        float rad     = attackAngle * PI / 180.f;
-        float offsetX = std::cos(rad) * 12.f;
-        float offsetY = std::sin(rad) * 12.f;
-        swordHitbox.setPosition(position.x + offsetX, position.y + offsetY);
+        swordHitbox.setPosition(position.x + std::cos(rad) * 6.f,
+                                position.y + std::sin(rad) * 6.f);
+
+        if (hasSlashTexture) {
+            slashSprite.setRotation(attackAngle); 
+            slashSprite.setPosition(position.x + std::cos(rad) * 6.f,
+                                    position.y + std::sin(rad) * 6.f);
+
+            // ─── NOWA LOGIKA PING-PONG ───────────────────────────────────────
+            float timeElapsed = attackDuration - attackTimer;
+            
+            // Dla 6 klatek mamy 11 kroków: do przodu (6) i z powrotem (5)
+            int totalAnimSteps = slashMaxFrames * 2 - 1; 
+            float timePerFrame = attackDuration / totalAnimSteps;
+            
+            int animStep = static_cast<int>(timeElapsed / timePerFrame);
+            if (animStep >= totalAnimSteps) animStep = totalAnimSteps - 1;
+            if (animStep < 0) animStep = 0;
+
+            int currentSlashFrame = animStep;
+            
+            // Jeśli minęliśmy połowę animacji, zaczynamy odliczać wstecz
+            if (animStep >= slashMaxFrames) {
+                currentSlashFrame = (slashMaxFrames - 1) - (animStep - slashMaxFrames + 1);
+            }
+            // ─────────────────────────────────────────────────────────────────
+
+            // Wycinanie odpowiedniej klatki z siatki
+            int col = currentSlashFrame % slashCols;
+            int row = currentSlashFrame / slashCols;
+
+            slashSprite.setTextureRect(sf::IntRect(
+                col * slashFrameWidth, 
+                row * slashFrameHeight, 
+                slashFrameWidth, 
+                slashFrameHeight
+            ));
+
+            if (attackAngle > 90.f || attackAngle < -90.f) {
+                slashSprite.setScale(1.f, -1.f);
+            } else {
+                slashSprite.setScale(1.f, 1.f);
+            }
+        }
 
         if (attackTimer <= 0.f) {
             isAttacking = false;
-            // Return to idle texture
-            if (hasIdleTexture) {
-                currentAnim    = AnimState::IDLE;
-                sprite.setTexture(textureIdle);
-                sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
-                currentColumn  = 0;
-                animationTimer = 0.f;
-                maxColumns     = 3;
-                sheetCols      = 2;
-                frameDuration  = 0.15f;
-            }
+            setAnim(AnimState::IDLE);
         }
     }
 }
@@ -230,28 +311,51 @@ void Player::update(float dt, sf::RenderWindow& window) {
     if (dashCooldownTimer > 0.f) dashCooldownTimer -= dt;
 
     if (isDashing) {
+        if (currentAnim != AnimState::ATTACK)
+            setAnim(AnimState::DASH);
+
         position  += dashDir * (speed * 3.f) * dt;
         dashTimer -= dt;
-        if (dashTimer <= 0.f) isDashing = false;
-    } else {
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) moveDir.y -= 1.f;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) moveDir.y += 1.f;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) { moveDir.x -= 1.f; facingLeft = true;  }
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) { moveDir.x += 1.f; facingLeft = false; }
 
-        if (moveDir.x != 0.f || moveDir.y != 0.f) {
-            float len = std::sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
-            position += (moveDir / len) * speed * dt;
+        if (dashTimer <= 0.f) {
+            isDashing = false;
+            if (currentAnim == AnimState::DASH)
+                setAnim(AnimState::IDLE);
         }
+    } else {
+        bool movingX = false, movingY = false;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) { moveDir.y -= 1.f; movingY = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) { moveDir.y += 1.f; movingY = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) { moveDir.x -= 1.f; facingLeft = true;  movingX = true; }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) { moveDir.x += 1.f; facingLeft = false; movingX = true; }
+
+        bool moving = movingX || movingY;
+
+        if (moving) {
+            float len = std::sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
+            
+            // Zabezpieczenie przed dzieleniem przez zero!
+            if (len > 0.f) {
+                position += (moveDir / len) * speed * dt;
+            }
+
+            if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
+                setAnim(AnimState::WALK);
+        } else {
+            if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
+                setAnim(AnimState::IDLE);
+        }
+
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space)) startDash(moveDir);
     }
 
+    // Border clamping
     if (position.x < 12.f)         position.x = 12.f;
     if (position.x > 388.f)        position.x = 388.f;
     if (position.y < 12.f)         position.y = 12.f;
     if (position.y > 225.f - 40.f) position.y = 225.f - 40.f;
 
-    // Animation frame advance
+    // ── Advance animation frame ───────────────────────────────────────────────
     animationTimer += dt;
     if (animationTimer >= frameDuration) {
         animationTimer -= frameDuration;
@@ -283,8 +387,14 @@ void Player::draw(sf::RenderWindow& window) {
         window.draw(fallbackShape);
     }
 
-    // Sword hitbox drawn on top while attacking
-    if (isAttacking) window.draw(swordHitbox);
+    if (isAttacking) {
+        if (hasSlashTexture) {
+            window.draw(slashSprite);
+        } else {
+            // Rysuje hitbox tylko jeśli tekstura slasha się nie wczytała
+            window.draw(swordHitbox);
+        }
+    }
 }
 
 // ── Dash ──────────────────────────────────────────────────────────────────────

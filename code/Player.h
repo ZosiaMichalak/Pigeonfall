@@ -46,15 +46,18 @@ private:
     sf::Texture        textureIdle;
     sf::Texture        textureWalk;
     sf::Texture        textureAttack;
+    sf::Texture        textureDash;       // 7 frames, 50x32 each
     sf::RectangleShape fallbackShape;
 
     bool hasIdleTexture;
     bool hasWalkTexture;
     bool hasAttackTexture;
+    bool hasDashTexture;
     bool facingLeft;
 
     void applyFacingScale();
 
+    // Animation — frameWidth/Height change per state (dash=50x32, rest=32x32)
     AnimState   currentAnim;
     sf::IntRect currentFrame;
     float animationTimer;
@@ -64,6 +67,9 @@ private:
     int   currentColumn;
     int   maxColumns;
     int   sheetCols;
+
+    // Helper: switch animation state, resets column/timer
+    void setAnim(AnimState anim);
 
     // Movement
     float speed;
@@ -83,9 +89,8 @@ private:
     float attackCooldownTimer;
     float attackCooldownMax;
     int   attackDamage;
-    float attackAngle;          // angle toward mouse (degrees)
+    float attackAngle;
 
-    // Sword hitbox — visible, rotated toward mouse
     sf::RectangleShape swordHitbox;
 
     void updateAttack(float dt, sf::RenderWindow& window);
@@ -106,6 +111,16 @@ private:
     std::array<int, SKILL_COUNT> upgradeLevels;
 
     void applySkillStats();
+
+
+
+        sf::Texture slashTexture;
+    sf::Sprite  slashSprite;
+    bool        hasSlashTexture;
+    int         slashCols;
+    int         slashMaxFrames;
+    int         slashFrameWidth;
+    int         slashFrameHeight;
 
 public:
     Player(float x, float y);
