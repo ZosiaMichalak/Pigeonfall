@@ -12,13 +12,13 @@
 // Konstruktor ręczny
 Room::Room(int id, int enemyCount, sf::Color fallbackColor)
     : id(id), enemyCount(enemyCount), isCleared(false), floorColor(fallbackColor),
-      bgIndex(0), hasBackground(false), doorPosition({400.f, 100.f}) {}
+      bgIndex(0), hasBackground(false), doorPosition({400.f, 100.f}), doorRotation(0.f) {}
 
 // Konstruktor na podstawie szablonu
 Room::Room(int id, const RoomTemplate& tmpl)
     : id(id), enemyCount(static_cast<int>(tmpl.enemies.size())), isCleared(false),
       floorColor(sf::Color(20, 25, 40)), bgIndex(tmpl.background), hasBackground(false),
-      enemySpawns(tmpl.enemies), doorPosition(tmpl.doorPosition)
+      enemySpawns(tmpl.enemies), doorPosition(tmpl.doorPosition), doorRotation(tmpl.doorRotation)
 {
     for (const auto& p : tmpl.props) {
         switch (p.type) {
@@ -62,50 +62,14 @@ namespace RoomTemplates {
 
 std::vector<RoomTemplate> getAll() {
     return {
-        {
-            "Corridor", 0,
-            {{EnemyType::BULLET, {200.f, 100.f}, 0}, {EnemyType::BULLET, {300.f, 80.f}, 0}},
-            {{PropDef::Type::BENCH,   {50.f,  150.f}},
-             {PropDef::Type::HYDRANT, {300.f, 140.f}}},
-            {394.f, 100.f}
-        },
-        {
-            "Ambush", 1,
-            {{EnemyType::DASH, {150.f, 80.f}, 1}, {EnemyType::BULLET, {250.f, 120.f}, 0}, {EnemyType::DASH, {330.f, 60.f}, 1}},
-            {{PropDef::Type::TRASH,   {80.f,  160.f}},
-             {PropDef::Type::FLOWERS, {200.f, 155.f}},
-             {PropDef::Type::CAR1,    {240.f, 130.f}}},
-            {394.f, 100.f}
-        },
-        {
-            "Showdown", 2,
-            {{EnemyType::BULLET, {180.f, 90.f}, 1}, {EnemyType::BULLET, {280.f, 110.f}, 1}, {EnemyType::DASH, {230.f, 60.f}, 2}},
-            {{PropDef::Type::VENDING, {0.f,   0.f}},
-             {PropDef::Type::CAR2,    {200.f, 130.f}},
-             {PropDef::Type::BENCH,   {320.f, 150.f}}},
-            {394.f, 100.f}
-        },
-        {
-            "Gauntlet", 0,
-            {{EnemyType::BULLET, {120.f, 70.f}, 0}, {EnemyType::BULLET, {200.f, 130.f}, 0}, {EnemyType::BULLET, {300.f, 90.f}, 0}, {EnemyType::DASH, {260.f, 60.f}, 1}},
-            {{PropDef::Type::CAR3,    {150.f, 130.f}},
-             {PropDef::Type::HYDRANT, {80.f,  145.f}}},
-            {394.f, 100.f}
-        },
-        {
-            "Crossfire", 1,
-            {{EnemyType::BULLET, {100.f, 100.f}, 1}, {EnemyType::DASH, {320.f, 100.f}, 1}},
-            {{PropDef::Type::FLOWERS, {180.f, 150.f}},
-             {PropDef::Type::BENCH,   {260.f, 155.f}},
-             {PropDef::Type::CAR1,    {100.f, 130.f}}},
-            {394.f, 100.f}
-        },
-        {
-            "StartRoom", 0,
-            {},
-            {{PropDef::Type::TRASH, {200.f, 110.f}}},
-            {394.f, 100.f}
-        }
+{
+    "Starter Room", 3,
+    {},
+    {{PropDef::Type::HYDRANT, {297.f, 65.f}}, {PropDef::Type::FLOWERS, {113.f, 57.f}}, {PropDef::Type::BENCH, {81.f, 55.f}}, {PropDef::Type::CAR1, {171.f, 108.f}}, {PropDef::Type::CAR3, {319.f, 0.f}}},
+    {400.f, 120.f},0.f
+}
+
+
     };
 }
 

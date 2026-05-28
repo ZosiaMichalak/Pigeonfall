@@ -5,8 +5,9 @@ sf::Texture Car::textureCar1;
 sf::Texture Car::textureCar2;
 sf::Texture Car::textureCar3;
 
-// Definiujemy skalę dla samochodów
-static constexpr float SCALE = 2.3f;
+// Sprite: 40x32 px — uniform scale keeps aspect ratio intact
+// 2.0 renders car as 80x64 game-world px (dominant street prop)
+static constexpr float SCALE = 2.0f;
 
 void Car::loadTextures() {
     auto load = [](sf::Texture& tex, const char* path) {
@@ -28,7 +29,6 @@ Car::Car(sf::Vector2f pos, CarType type) : position(pos), carType(type) {
         case CarType::CAR2: sprite.setTexture(textureCar2); break;
         case CarType::CAR3: sprite.setTexture(textureCar3); break;
     }
-    // Zastosowanie skali do grafiki
     sprite.setScale(SCALE, SCALE);
     sprite.setPosition(position);
 }
@@ -38,13 +38,12 @@ void Car::draw(sf::RenderWindow& window) {
 }
 
 sf::FloatRect Car::getBounds() const {
-    // Obliczamy wymiary i offsety proporcjonalnie do skali
-    // Oryginał: 36x18, offset: 2.f/8.f
+    // Hitbox is tighter than the full sprite (excludes bonnet overhang etc.)
     float width  = 36.f * SCALE;
     float height = 18.f * SCALE;
-    
+
     float offsetX = 2.f * SCALE;
     float offsetY = 8.f * SCALE;
-    
+
     return { position.x + offsetX, position.y + offsetY, width, height };
 }

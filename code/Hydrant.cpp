@@ -3,8 +3,9 @@
 
 sf::Texture Hydrant::texture;
 
-// Współczynnik skali – dostosuj go według potrzeb
-static constexpr float SCALE = 1.3f;
+// Sprite: 31x32 px — uniform scale keeps aspect ratio intact
+// 0.9 renders hydrant as ~28x29 game-world px (smaller than bench/trash but visible)
+static constexpr float SCALE = 0.9f;
 
 void Hydrant::loadTexture() {
     if (texture.getSize().x == 0) {
@@ -17,7 +18,6 @@ void Hydrant::loadTexture() {
 
 Hydrant::Hydrant(sf::Vector2f pos) : position(pos) {
     sprite.setTexture(texture);
-    // Skalowanie grafiki
     sprite.setScale(SCALE, SCALE);
     sprite.setPosition(position);
 }
@@ -27,12 +27,11 @@ void Hydrant::draw(sf::RenderWindow& window) {
 }
 
 sf::FloatRect Hydrant::getBounds() const {
-    // Oryginał: 15.f szerokości, 20.f wysokości, offset 8.f/10.f
     float width  = 15.f * SCALE;
     float height = 20.f * SCALE;
-    
+
     float offsetX = 8.f * SCALE;
     float offsetY = 10.f * SCALE;
-    
+
     return { position.x + offsetX, position.y + offsetY, width, height };
 }

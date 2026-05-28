@@ -1,8 +1,12 @@
 #include "Game.h"
 #include "Bullet.h"
+#include "Car.h"
+#include "Flowers.h"
+#include "Bench.h"
 #include "Room.h"
 #include "Vending.h"
 #include "Trash.h"
+#include "Hydrant.h"
 #include <algorithm>
 #include <ctime>
 #include <cmath>
@@ -49,11 +53,15 @@ Game::Game()
 
     auto templates = RoomTemplates::getAll();
 
+    Bench::loadTexture();
     Vending::loadTexture();
     Trash::loadTexture();
     Coin::loadTexture();
+    Hydrant::loadTexture();
+    Flowers::loadTexture();
+    Car::loadTextures();
 
-    rooms.push_back(std::make_unique<Room>(0, templates[5]));
+    rooms.push_back(std::make_unique<Room>(0, templates[0]));
     rooms[0]->loadAssets();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
@@ -418,6 +426,7 @@ void Game::render() {
     rooms[currentRoomIndex]->draw(window);
 
     doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
+    doorShape.setRotation(rooms[currentRoomIndex]->getDoorRotation()); 
     window.draw(doorShape);
 
     for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)
