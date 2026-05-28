@@ -386,9 +386,10 @@ void Game::update(float dt) {
 void Game::render() {
     window.clear(sf::Color::Black);
 
-    // Background + props (handles bg texture or fallback colour internally)
     rooms[currentRoomIndex]->draw(window);
 
+    // Update the door position dynamically based on the current room
+    doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
     window.draw(doorShape);
 
     for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)

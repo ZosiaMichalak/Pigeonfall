@@ -25,6 +25,7 @@ struct RoomTemplate {
     int background;
     std::vector<EnemySpawn> enemies;
     std::vector<PropDef> props;
+    sf::Vector2f doorPosition; // Add this
 };
 
 namespace RoomTemplates {
@@ -40,6 +41,8 @@ public:
     int getId() const { return id; }
     int getEnemyCount() const { return enemyCount; }
     bool getIsCleared() const { return isCleared; }
+
+    sf::Vector2f getDoorPosition() const { return doorPosition; }
     
     void setCleared(bool c) { isCleared = c; }
     const std::vector<EnemySpawn>& getEnemySpawns() const { return enemySpawns; }
@@ -55,6 +58,8 @@ private:
     sf::Color floorColor;
     int bgIndex;
     bool hasBackground;
+
+    sf::Vector2f doorPosition;
 
     sf::Texture bgTexture;
     sf::Sprite bgSprite;
