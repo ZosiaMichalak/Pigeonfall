@@ -15,8 +15,15 @@ private:
     float shootTimer;
     int   strafeSign;
 
-public:
+    sf::Texture texIdle;
+    sf::Texture texWalk;
 
+    sf::Color baseColor;
+
+    // Switch between idle / walk sheet
+    void setSheet(bool walking);
+
+public:
     explicit BulletEnemy(float x, float y, int tier = 0);
 
     void updateAI(float dt, sf::Vector2f playerPos,

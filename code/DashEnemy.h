@@ -31,6 +31,16 @@ private:
 
     sf::Color baseColor;
 
+    // Per-state textures
+    sf::Texture texIdle;
+    sf::Texture texWalk;
+    sf::Texture texLoading;   // wind-up
+    sf::Texture texDash;
+
+    DashEnemyState prevSheetState = DashEnemyState::RECOVER; // forces first switch
+
+    void setSheet(DashEnemyState s);
+
 public:
     explicit DashEnemy(float x, float y, int tier = 0);
 

@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <string>
 
 #include "GameObject.h"
 #include "Room.h"
@@ -14,7 +15,10 @@
 #include "Player.h"
 #include "HUD.h"
 #include "SkillTreeUI.h"
+#include "VendingUI.h"
 #include "Coin.h"
+#include "HelperCompanion.h"
+#include "AnnoyingDog.h"
 
 class Game {
 private:
@@ -33,6 +37,7 @@ private:
     sf::Text           interactText;
 
     bool wasEPressed;
+    bool wasFPressed;
 
     bool isFullscreen;
     bool wasF11Pressed;
@@ -40,11 +45,18 @@ private:
     // Sub-systems
     HUD         hud;
     SkillTreeUI skillTree;
+    VendingUI   vendingUI;
 
     bool wasMPressed;
 
     // ── Coins ─────────────────────────────────────────────────────────────────
-    int totalCoins; // persists across rooms within a run
+    int totalCoins;
+
+    // ── Held item ─────────────────────────────────────────────────────────────
+    std::string heldItem;   // empty = nothing held
+
+    // ── Vending proximity ─────────────────────────────────────────────────────
+    bool nearVending;       // true when player is within interaction range
 
     void initWindow();
     void applyWindowMode();
@@ -54,6 +66,11 @@ private:
     void spawnEnemy();
     void nextRoom();
     void resetRun();
+
+    // Returns the closest vending-machine bounds in the current room, or an
+    // empty rect if none exist.  Uses Room's prop list via getPropColliders()
+    // — we store vending positions separately for proximity checks.
+    sf::FloatRect getClosestVendingBounds(sf::Vector2f playerCenter) const;
 
 public:
     Game();

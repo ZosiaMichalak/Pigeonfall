@@ -5,6 +5,12 @@
 
 static constexpr float PI = 3.14159265f;
 
+// Sprite sheet layouts (all frames 51x32):
+//   dashEnemy_idle    : 1 col x 3 rows  =>  3 frames
+//   dashEnemy_walk    : 2 cols x 3 rows =>  6 frames
+//   dashEnemy_loading : 2 cols x 4 rows =>  8 frames  (wind-up / loading)
+//   dashEnemy_dash    : 2 cols x 4 rows =>  8 frames
+
 DashEnemy::DashEnemy(float x, float y, int tier) : Enemy(x, y) {
     maxHp     = 3 + tier;
     hp        = maxHp;
@@ -37,8 +43,61 @@ DashEnemy::DashEnemy(float x, float y, int tier) : Enemy(x, y) {
     int b = std::min(255, 220 + tier * 10);
     baseColor = sf::Color(r, 40, b);
 
+    // Load all four sheets
+    texIdle.loadFromFile("assets/dashEnemy_idle.png");
+    texWalk.loadFromFile("assets/dashEnemy_walk.png");
+    texLoading.loadFromFile("assets/dashEnemy_loading.png");
+    texDash.loadFromFile("assets/dashEnemy_dash.png");
+
+    if (texIdle.getSize().x > 0) {
+        hasSprite = true;
+        sprite.setOrigin(frameW / 2.f, frameH / 2.f);
+    }
+
+    // Fallback colour
     shape.setFillColor(baseColor);
     hpBarFront.setFillColor(sf::Color(r, 50, b));
+
+    // NAPRAWA: Zaktualizuj grafikę przed 1. klatką!
+    setSheet(dashState);
+    if (hasSprite) tickAnim(0.f);
+}
+
+void DashEnemy::setSheet(DashEnemyState s) {
+    if (s == prevSheetState) return;
+    prevSheetState = s;
+    animCol   = 0;
+    animTimer = 0.f;
+
+    switch (s) {
+    case DashEnemyState::STALK:
+        // Use walk animation when stalking/orbiting the player
+        sprite.setTexture(texWalk);
+        animMaxCols   = 6;
+        animSheetCols = 2;
+        frameDur      = 0.10f;
+        break;
+    case DashEnemyState::RECOVER:
+        // Use idle animation only when recovering from a dash
+        sprite.setTexture(texIdle);
+        animMaxCols   = 3;
+        animSheetCols = 1;
+        frameDur      = 0.18f;
+        break;
+    case DashEnemyState::WIND_UP:
+        sprite.setTexture(texLoading);
+        // Play loading at a speed that finishes in windUpDuration
+        animMaxCols   = 8;
+        animSheetCols = 2;
+        frameDur      = windUpDuration / 8.f;
+        break;
+    case DashEnemyState::DASH:
+        sprite.setTexture(texDash);
+        animMaxCols   = 8;
+        animSheetCols = 2;
+        frameDur      = dashDuration / 8.f;
+        break;
+    }
 }
 
 void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
@@ -47,15 +106,16 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     (void)spawnQueue;
     if (!isActive()) return;
 
+    // ── Hit flash ──────────────────────────────────────────────────────────────
     if (isHit) {
         hitTimer -= dt;
         if (hitTimer <= 0.f) {
             isHit = false;
-            shape.setFillColor(
-                dashState == DashEnemyState::WIND_UP
-                    ? sf::Color(255, 255, 60) : baseColor);
+            if (hasSprite) sprite.setColor(sf::Color::White);
+            else           shape.setFillColor(baseColor);
         } else {
-            shape.setFillColor(sf::Color::White);
+            if (hasSprite) sprite.setColor(sf::Color(255, 100, 100));
+            else           shape.setFillColor(sf::Color::White);
         }
     }
 
@@ -65,9 +125,15 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
 
     if (dashCooldownTimer > 0.f) dashCooldownTimer -= dt;
 
+    // Update facing toward player
+    if (dist > 0.f) facingLeft = (toPlayer.x < 0.f);
+
+    // ── State machine ──────────────────────────────────────────────────────────
     switch (dashState) {
 
     case DashEnemyState::STALK: {
+        setSheet(DashEnemyState::STALK);
+
         orbitAngle += orbitSign * 1.8f * dt;
         sf::Vector2f orbitTarget(
             playerPos.x + std::cos(orbitAngle) * orbitRadius,
@@ -81,7 +147,6 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
             dashState     = DashEnemyState::WIND_UP;
             windUpTimer   = windUpDuration;
             dashDirection = toPlayerNorm;
-            if (!isHit) shape.setFillColor(sf::Color(255, 255, 60));
         } else if (stalkTimer <= 0.f) {
             stalkTimer = stalkDuration;
         }
@@ -89,17 +154,20 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     }
 
     case DashEnemyState::WIND_UP: {
+        setSheet(DashEnemyState::WIND_UP);
+
         windUpTimer -= dt;
         position += dashDirection * 15.f * dt;
         if (windUpTimer <= 0.f) {
             dashState = DashEnemyState::DASH;
             dashTimer = dashDuration;
-            if (!isHit) shape.setFillColor(baseColor);
         }
         break;
     }
 
     case DashEnemyState::DASH: {
+        setSheet(DashEnemyState::DASH);
+
         position += dashDirection * dashSpeed * dt;
         dashTimer -= dt;
         if (dashTimer <= 0.f) {
@@ -114,21 +182,29 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     }
 
     case DashEnemyState::RECOVER: {
+        setSheet(DashEnemyState::RECOVER);
+
         recoverTimer -= dt;
         if (recoverTimer <= 0.f) dashState = DashEnemyState::STALK;
         break;
     }
     }
 
+    // Hard clamp
     if (position.x < 10.f)  position.x = 10.f;
     if (position.x > 390.f) position.x = 390.f;
     if (position.y < 10.f)  position.y = 10.f;
-
     if (position.y > 185.f) position.y = 185.f;
 
-    shape.setPosition(position);
+    // ── Finalize visuals ───────────────────────────────────────────────────────
+    if (hasSprite) {
+        tickAnim(dt);
+    } else {
+        shape.setPosition(position);
+    }
+
     float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
-    hpBarBack.setPosition (position.x,                         position.y - 8.f);
-    hpBarFront.setPosition(position.x - (4.5f * (1.f - pct)), position.y - 8.f);
+    hpBarBack.setPosition (position.x, position.y - 10.f);
+    hpBarFront.setPosition(position.x, position.y - 10.f);
     hpBarFront.setSize(sf::Vector2f(9.f * pct, 1.5f));
 }

@@ -85,6 +85,40 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
         hpText.setPosition(hpTextX, hpTextY);
         window.draw(hpText);
 
+        // Second-Chance / Totem dots
+        // Skill SC: 1 dot (yellow if active, grey if used)
+        // Each totem charge: 1 extra yellow dot (disappears when consumed)
+        {
+            float dotX = 96.f; // just right of the HP bar (10 + 80 + 6)
+            float dotY = px(BAR_Y + 4.f);
+            float dotR = 3.f;
+
+            bool hasSkillSC = (p->getUpgradeLevel(SK_SECOND_CHANCE) > 0);
+            if (hasSkillSC) {
+                sf::CircleShape dot(dotR);
+                dot.setOrigin(dotR, dotR);
+                dot.setPosition(dotX + dotR, dotY + dotR);
+                dot.setFillColor(p->isSecondChanceUsed()
+                    ? sf::Color(90, 90, 90) : sf::Color(255, 210, 30));
+                dot.setOutlineThickness(0.5f);
+                dot.setOutlineColor(sf::Color(180, 140, 0));
+                window.draw(dot);
+                dotX += dotR * 2.f + 3.f;
+            }
+
+            int totemCharges = p->getTotemCharges();
+            for (int t = 0; t < totemCharges; ++t) {
+                sf::CircleShape dot(dotR);
+                dot.setOrigin(dotR, dotR);
+                dot.setPosition(dotX + dotR, dotY + dotR);
+                dot.setFillColor(sf::Color(255, 210, 30));
+                dot.setOutlineThickness(0.5f);
+                dot.setOutlineColor(sf::Color(180, 140, 0));
+                window.draw(dot);
+                dotX += dotR * 2.f + 3.f;
+            }
+        }
+
         // Tekst Poziomu (LVL) - rozmiar 16, skalowany do 0.75 by wyglądał jak dawne 12
         sf::Text lvlText("LVL: " + std::to_string(p->getLevel()), font, 16);
         lvlText.setScale(0.75f, 0.75f);

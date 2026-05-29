@@ -42,6 +42,7 @@ private:
     static int                          persistentXpToNext;
     static std::array<int, SKILL_COUNT> persistentUpgrades;
     static bool                         persistentSecondChanceUsed;
+    static int                          persistentTotemCharges; // extra SC from Totem items
 
     sf::Sprite         sprite;
     sf::Texture        textureIdle;
@@ -113,9 +114,12 @@ private:
 
     void applySkillStats();
 
+    // Monster Energy buff
+    float monsterBuffTimer;
+    float monsterBuffBaseSpeed;
+    bool  monsterOneHitKill;
 
-
-        sf::Texture slashTexture;
+    sf::Texture slashTexture;
     sf::Sprite  slashSprite;
     bool        hasSlashTexture;
     int         slashCols;
@@ -159,6 +163,14 @@ public:
     bool canBuySkill(int id)     const;
     void buySkill(int id);
     bool isSecondChanceUsed()    const { return persistentSecondChanceUsed; }
+    int  getTotemCharges()       const { return persistentTotemCharges; }
+    void addTotemCharge();
+
+    // Monster Energy buff
+    void  applyMonsterBuff();
+    void  healFull();
+    bool  hasMonsterBuff()       const { return monsterBuffTimer > 0.f; }
+    bool  isMonsterOneHit()      const { return monsterOneHitKill; }
 
     void startDash(sf::Vector2f moveDir);
 };

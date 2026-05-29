@@ -16,6 +16,9 @@ static constexpr float VIEW_W   = 400.f;
 static constexpr float VIEW_H   = 225.f;
 static constexpr float UI_BAR_Y = 195.f;
 
+// Distance within which [E] prompt appears and vending can be opened
+static constexpr float VENDING_INTERACT_DIST = 30.f;
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
     return { r.left + r.width / 2.f, r.top + r.height / 2.f };
@@ -23,16 +26,19 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 Game::Game()
-    : hud(font), skillTree(font), totalCoins(0)
+    : hud(font), skillTree(font), vendingUI(font),
+      totalCoins(0), nearVending(false)
 {
     isFullscreen  = false;
     wasF11Pressed = false;
     wasEPressed   = false;
+    wasFPressed   = false;
     wasMPressed   = false;
     enemiesRemainingToSpawn = 0;
     currentRoomIndex = 0;
 
-    rng.seed(static_cast<unsigned>(time(nullptr)));
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+    rng.seed(static_cast<unsigned>(std::time(nullptr)));
 
     initWindow();
 
@@ -44,7 +50,7 @@ Game::Game()
     interactText.setFont(font);
     interactText.setCharacterSize(18);
     interactText.setFillColor(sf::Color::White);
-    interactText.setString("E");
+    interactText.setString("[E]");
 
     doorShape.setSize(sf::Vector2f(12.f, 32.f));
     doorShape.setOrigin(6.f, 16.f);
@@ -107,6 +113,23 @@ void Game::refreshFontTextures() {
         const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
 }
 
+// ── Vending proximity helper ──────────────────────────────────────────────────
+sf::FloatRect Game::getClosestVendingBounds(sf::Vector2f playerCenter) const {
+    sf::FloatRect best{};
+    float bestDist = 1e9f;
+
+    for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
+        if (col.height < 45.f) continue;
+
+        sf::Vector2f centre = getRectCenter(col);
+        float dx = centre.x - playerCenter.x;
+        float dy = centre.y - playerCenter.y;
+        float d  = std::sqrt(dx*dx + dy*dy);
+        if (d < bestDist) { bestDist = d; best = col; }
+    }
+    return best; 
+}
+
 // ── Game management ───────────────────────────────────────────────────────────
 void Game::spawnEnemy() {
     std::uniform_real_distribution<float> xDis(50.f, 350.f);
@@ -154,8 +177,10 @@ void Game::nextRoom() {
         newObjects.push_back(std::make_unique<Player>(20.f, 100.f));
     }
     objects = std::move(newObjects);
-    // Scale total enemies with room number: 3 base, +1 every 2 rooms, max 10
     enemiesRemainingToSpawn = std::min(3 + currentRoomIndex / 2, 10);
+
+    vendingUI.close();
+    nearVending = false;
 }
 
 void Game::resetRun() {
@@ -166,7 +191,10 @@ void Game::resetRun() {
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
     totalCoins              = 0;
+    heldItem                = "";
     skillTree.close();
+    vendingUI.close();
+    nearVending = false;
     objects.clear();
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
@@ -186,6 +214,32 @@ void Game::run() {
                     wasF11Pressed = true;
                 }
 
+                // ── Vending UI input ──────────────────────────────────────────
+                if (vendingUI.isOpen()) {
+                    if (event.key.code == sf::Keyboard::Up ||
+                        event.key.code == sf::Keyboard::W)
+                        vendingUI.moveSelection(-1);
+
+                    if (event.key.code == sf::Keyboard::Down ||
+                        event.key.code == sf::Keyboard::S)
+                        vendingUI.moveSelection(+1);
+
+                    if (event.key.code == sf::Keyboard::Return ||
+                        event.key.code == sf::Keyboard::Space)
+                    {
+                        std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
+                        if (!bought.empty())
+                            heldItem = bought;
+                    }
+
+                    if (event.key.code == sf::Keyboard::Escape ||
+                        event.key.code == sf::Keyboard::E)
+                        vendingUI.close();
+
+                    continue;
+                }
+
+                // ── Skill tree input ──────────────────────────────────────────
                 if (skillTree.isOpen()) {
                     if (event.key.code == sf::Keyboard::Up ||
                         event.key.code == sf::Keyboard::W)
@@ -203,6 +257,10 @@ void Game::run() {
                             ? nullptr : dynamic_cast<Player*>(objects[0].get());
                         skillTree.buySelected(p);
                     }
+
+                    if (event.key.code == sf::Keyboard::Escape ||
+                        event.key.code == sf::Keyboard::M)
+                        skillTree.close();
                 }
             }
             if (event.type == sf::Event::KeyReleased)
@@ -222,7 +280,6 @@ void Game::update(float dt) {
     Player* playerPtr = objects.empty()
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
 
-    // Handle player death
     if (playerPtr && playerPtr->isDeadNow()) {
         if (!playerPtr->consumeSecondChance()) {
             resetRun();
@@ -230,12 +287,40 @@ void Game::update(float dt) {
         }
     }
 
-    // Toggle skill tree (M key)
+    if (vendingUI.isOpen() || skillTree.isOpen()) return;
+
     bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::M);
     if (mNow && !wasMPressed) skillTree.toggle();
     wasMPressed = mNow;
 
-    if (skillTree.isOpen()) return;
+    // ── Use held item (F key) ─────────────────────────────────────────────────
+    bool fNow = sf::Keyboard::isKeyPressed(sf::Keyboard::F);
+    if (fNow && !wasFPressed && !heldItem.empty() && playerPtr && playerPtr->isActive()) {
+        sf::FloatRect pb = playerPtr->getBounds();
+        sf::Vector2f  pc = {pb.left + pb.width / 2.f, pb.top + pb.height / 2.f};
+
+        if (heldItem == "Monster Energy") {
+            playerPtr->applyMonsterBuff();
+            heldItem = "";
+        }
+        else if (heldItem == "Pizza") {
+            playerPtr->healFull();
+            heldItem = "";
+        }
+        else if (heldItem == "Duo") {
+            objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y));
+            heldItem = "";
+        }
+        else if (heldItem == "Annoying Dog") {
+            objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y));
+            heldItem = "";
+        }
+        else if (heldItem == "Totem") {
+            playerPtr->addTotemCharge();
+            heldItem = "";
+        }
+    }
+    wasFPressed = fNow;
 
     std::vector<std::unique_ptr<GameObject>> spawnQueue;
 
@@ -245,16 +330,18 @@ void Game::update(float dt) {
         if (auto* enemy = dynamic_cast<Enemy*>(obj.get()))
             if (playerPtr)
                 enemy->updateAI(dt, getRectCenter(playerPtr->getBounds()), spawnQueue);
+        if (auto* helper = dynamic_cast<HelperCompanion*>(obj.get()))
+            helper->tryHitEnemy(objects);
+        if (auto* dog = dynamic_cast<AnnoyingDog*>(obj.get()))
+            dog->tryExplode(objects, spawnQueue);
     }
 
-    // Keep player above HUD bar
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         if (pb.top + pb.height > UI_BAR_Y)
             playerPtr->setPosition({getRectCenter(pb).x, UI_BAR_Y - pb.height / 2.f});
     }
 
-    // Push player out of prop colliders
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
@@ -274,7 +361,6 @@ void Game::update(float dt) {
         }
     }
 
-    // Push enemies out of prop colliders
     const auto& propColliders = rooms[currentRoomIndex]->getPropColliders();
     for (auto& obj : objects) {
         auto* enemy = dynamic_cast<Enemy*>(obj.get());
@@ -294,7 +380,6 @@ void Game::update(float dt) {
                 newPos = {centre.x + minH, centre.y};
             else
                 newPos = {centre.x, centre.y + minV};
-            // Enemy stores position directly; nudge via shape position offset
             enemy->nudgePosition(newPos - centre);
             eb = enemy->getBounds();
         }
@@ -304,15 +389,12 @@ void Game::update(float dt) {
     spawnQueue.clear();
 
     // ── Collisions ────────────────────────────────────────────────────────────
-    // Use index + snapshot size: push_back inside the loop (coin drops) would
-    // invalidate a range-for iterator by reallocating the vector.
     const int collisionCount = static_cast<int>(objects.size());
     for (int idx = 0; idx < collisionCount; ++idx) {
         auto& objA = objects[idx];
         if (!objA->isActive()) continue;
 
         if (playerPtr && playerPtr->isAttackingNow()) {
-            // Deflect enemy bullets with sword
             if (auto* bullet = dynamic_cast<Bullet*>(objA.get())) {
                 if (bullet->isFromEnemy() &&
                     playerPtr->getSwordBounds().intersects(bullet->getBounds()))
@@ -335,16 +417,15 @@ void Game::update(float dt) {
                 }
             }
 
-            // Sword hits enemy
             if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
                 if (playerPtr->getSwordBounds().intersects(enemy->getBounds())) {
                     bool wasAlive = enemy->isActive();
-                    enemy->takeDamage(playerPtr->getComboHitDamage());
+                    int dmg = playerPtr->isMonsterOneHit() ? 9999 : playerPtr->getComboHitDamage();
+                    enemy->takeDamage(dmg);
                     if (wasAlive && !enemy->isActive()) {
                         int xpReward = dynamic_cast<DashEnemy*>(enemy) ? 3 : 2;
                         playerPtr->addXP(xpReward);
 
-                        // ── Drop coins ──────────────────────────────────────
                         sf::Vector2f deathPos = getRectCenter(enemy->getBounds());
                         int coinDrop = dynamic_cast<DashEnemy*>(enemy) ? 2 : 1;
                         static std::uniform_real_distribution<float> scatter(-8.f, 8.f);
@@ -374,9 +455,7 @@ void Game::update(float dt) {
             }
         }
 
-        // Bullet hits player or deflected bullet hits enemy
         if (auto* bullet = dynamic_cast<Bullet*>(objA.get())) {
-            // Bullets are blocked by props
             for (const sf::FloatRect& col : propColliders) {
                 if (bullet->getBounds().intersects(col)) {
                     bullet->destroy();
@@ -397,11 +476,11 @@ void Game::update(float dt) {
                     if (auto* e = dynamic_cast<Enemy*>(ob.get())) {
                         if (e->isActive() && e->getBounds().intersects(bullet->getBounds())) {
                             bool wasAlive = e->isActive();
-                            e->takeDamage(1);
+                            int dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
+                            e->takeDamage(dmg);
                             if (wasAlive && !e->isActive()) {
                                 playerPtr->addXP(dynamic_cast<DashEnemy*>(e) ? 3 : 2);
 
-                                // ── Drop coins ──────────────────────────────
                                 sf::Vector2f deathPos = getRectCenter(e->getBounds());
                                 int coinDrop = dynamic_cast<DashEnemy*>(e) ? 2 : 1;
                                 static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
@@ -435,15 +514,78 @@ void Game::update(float dt) {
             }
         }
 
-        // DashEnemy contact damage
-        if (auto* dasher = dynamic_cast<DashEnemy*>(objA.get())) {
-            if (dasher->isDashingNow() && playerPtr)
-                if (dasher->getBounds().intersects(playerPtr->getBounds()))
-                    if (!playerPtr->isDashingNow())
-                        playerPtr->takeDamage(1);
-        }
+       // ── Player & Enemy Contact (Damage & Push Apart) ──────────────────────
+        if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
+            if (playerPtr && playerPtr->isActive()) {
+                sf::FloatRect playerBounds = playerPtr->getBounds();
+                sf::FloatRect enemyBounds  = enemy->getBounds();
 
-        // ── Coin pickup ───────────────────────────────────────────────────────
+                if (playerBounds.intersects(enemyBounds)) {
+                    // Skip dash-enemy pushing while it is mid-dash (it deals damage instead)
+                    bool skipPush = false;
+                    if (auto* de = dynamic_cast<DashEnemy*>(enemy)) {
+                        if (de->isDashingNow()) {
+                            if (!playerPtr->isDashingNow()) {
+                                playerPtr->takeDamage(1);
+                            }
+                            skipPush = true;
+                        }
+                    }
+
+                    if (!skipPush) {
+                        float overlapLeft   = (playerBounds.left + playerBounds.width)  - enemyBounds.left;
+                        float overlapRight  = (enemyBounds.left  + enemyBounds.width)   - playerBounds.left;
+                        float overlapTop    = (playerBounds.top  + playerBounds.height) - enemyBounds.top;
+                        float overlapBottom = (enemyBounds.top   + enemyBounds.height)  - playerBounds.top;
+
+                        float minX = std::min(overlapLeft, overlapRight);
+                        float minY = std::min(overlapTop,  overlapBottom);
+
+                        sf::Vector2f pushEnemy(0.f, 0.f);
+                        sf::Vector2f pushPlayer(0.f, 0.f);
+
+                        if (minX < minY) {
+                            float half = minX * 0.5f;
+                            if (overlapLeft < overlapRight) {
+                                pushPlayer.x = -half;
+                                pushEnemy.x  =  half;
+                            } else {
+                                pushPlayer.x =  half;
+                                pushEnemy.x  = -half;
+                            }
+                        } else {
+                            float half = minY * 0.5f;
+                            if (overlapTop < overlapBottom) {
+                                pushPlayer.y = -half;
+                                pushEnemy.y  =  half;
+                            } else {
+                                pushPlayer.y =  half;
+                                pushEnemy.y  = -half;
+                            }
+                        }
+
+                        // Apply pushes
+                        playerPtr->setPosition(sf::Vector2f(
+                            playerBounds.left + playerBounds.width  / 2.f + pushPlayer.x,
+                            playerBounds.top  + playerBounds.height / 2.f + pushPlayer.y
+                        ));
+
+                        enemy->nudgePosition(pushEnemy);
+
+                        // Touching the enemy deals damage (regular contact)
+                        // ZMIANA: Wyłączamy obrażenia z dotyku dla DashEnemy ORAZ BulletEnemy.
+                        if (!playerPtr->isDashingNow() && 
+                            !dynamic_cast<DashEnemy*>(enemy) && 
+                            !dynamic_cast<BulletEnemy*>(enemy)) 
+                        {
+                            playerPtr->takeDamage(1);
+                        }
+                    }
+                }
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────
+
         if (auto* coin = dynamic_cast<Coin*>(objA.get())) {
             if (playerPtr && playerPtr->getBounds().intersects(coin->getBounds())) {
                 coin->destroy();
@@ -452,22 +594,18 @@ void Game::update(float dt) {
         }
     }
 
-    // Flush coins (and anything else) queued during collision loop
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
     spawnQueue.clear();
 
-    // Remove inactive objects
     objects.erase(
         std::remove_if(objects.begin(), objects.end(),
             [](const std::unique_ptr<GameObject>& o){ return !o->isActive(); }),
         objects.end());
 
-    // Count living enemies
     int alive = 0;
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
 
     if (alive == 0 && enemiesRemainingToSpawn > 0) {
-        // Wave size grows with room: 1-2 early, up to 4-5 late
         int minW = 1;
         int maxW = std::min(2 + currentRoomIndex / 3, 5);
         std::uniform_int_distribution<int> wsd(minW, maxW);
@@ -480,14 +618,39 @@ void Game::update(float dt) {
     rooms[currentRoomIndex]->setCleared(cleared);
     doorShape.setFillColor(cleared ? sf::Color(230, 180, 40) : sf::Color(70, 70, 70));
 
-    // Door interaction
-    if (cleared && playerPtr) {
+    // ── Vending proximity ─────────────────────────────────────────────────────
+    nearVending = false;
+    sf::Vector2f vendingPromptPos{};
+    if (playerPtr && playerPtr->isActive()) {
+        sf::Vector2f pc = getRectCenter(playerPtr->getBounds());
+        sf::FloatRect vb = getClosestVendingBounds(pc);
+        if (vb.width > 0.f) {
+            sf::Vector2f vc = getRectCenter(vb);
+            float dx = pc.x - vc.x, dy = pc.y - vc.y;
+            if (std::sqrt(dx*dx + dy*dy) < VENDING_INTERACT_DIST + vb.width / 2.f) {
+                nearVending = true;
+                vendingPromptPos = {vc.x - 10.f, vb.top - 16.f};
+
+                bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
+                if (eNow && !wasEPressed && !skillTree.isOpen()) {
+                    vendingUI.openShop();
+                }
+                wasEPressed = eNow;
+            }
+        }
+    }
+
+    // ── Door interaction (only when not near vending) ─────────────────────────
+    if (!nearVending && cleared && playerPtr) {
         if (playerPtr->getBounds().intersects(doorShape.getGlobalBounds())) {
             bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
             if (eNow && !wasEPressed) nextRoom();
             wasEPressed = eNow;
         }
     }
+
+    if (!sf::Keyboard::isKeyPressed(sf::Keyboard::E))
+        wasEPressed = false;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -497,7 +660,7 @@ void Game::render() {
     rooms[currentRoomIndex]->draw(window);
 
     doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
-    doorShape.setRotation(rooms[currentRoomIndex]->getDoorRotation()); 
+    doorShape.setRotation(rooms[currentRoomIndex]->getDoorRotation());
     window.draw(doorShape);
 
     for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)
@@ -509,8 +672,7 @@ void Game::render() {
     hud.renderSkillsHint(window, playerPtr);
     hud.render(window, playerPtr, rooms[currentRoomIndex]->getId(), totalCoins);
 
-    // "E" prompt near door when room is cleared
-    if (playerPtr && rooms[currentRoomIndex]->getIsCleared()) {
+    if (playerPtr && rooms[currentRoomIndex]->getIsCleared() && !nearVending) {
         sf::Vector2f pp = getRectCenter(playerPtr->getBounds());
         sf::Vector2f dp = doorShape.getPosition();
         float dx = pp.x - dp.x, dy = pp.y - dp.y;
@@ -520,8 +682,41 @@ void Game::render() {
         }
     }
 
+    if (nearVending && !vendingUI.isOpen() && playerPtr) {
+        sf::Vector2f pc = getRectCenter(playerPtr->getBounds());
+        sf::FloatRect vb = getClosestVendingBounds(pc);
+        if (vb.width > 0.f) {
+            sf::Vector2f vc = getRectCenter(vb);
+            interactText.setPosition(vc.x - 10.f, vb.top - 16.f);
+            window.draw(interactText);
+        }
+    }
+
+    if (!heldItem.empty()) {
+        sf::Text heldLabel("[F] " + heldItem, font, 16);
+        heldLabel.setScale(0.75f, 0.75f);
+        heldLabel.setFillColor(sf::Color(180, 230, 180));
+        float hw = heldLabel.getGlobalBounds().width;
+        float hx = 328.f - hw - 4.f;
+        if (hx < 160.f) { heldLabel.setScale(0.6f, 0.6f); hw = heldLabel.getGlobalBounds().width; hx = 328.f - hw - 4.f; }
+        heldLabel.setPosition(std::max(2.f, hx), 195.f + 2.f);
+        window.draw(heldLabel);
+    }
+
+    if (playerPtr && playerPtr->hasMonsterBuff()) {
+        sf::Text buffLabel("MONSTER!", font, 16);
+        buffLabel.setScale(0.75f, 0.75f);
+        buffLabel.setFillColor(sf::Color(50, 220, 80));
+        float bw = buffLabel.getGlobalBounds().width;
+        buffLabel.setPosition(328.f - bw - 4.f, 195.f + 14.f);
+        window.draw(buffLabel);
+    }
+
     if (skillTree.isOpen())
         skillTree.render(window, playerPtr);
+
+    if (vendingUI.isOpen())
+        vendingUI.render(window, totalCoins, heldItem);
 
     window.display();
 }

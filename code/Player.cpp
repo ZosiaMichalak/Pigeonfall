@@ -12,6 +12,7 @@ int                          Player::persistentSkillPoints      = 0;
 int                          Player::persistentXpToNext         = 10;
 std::array<int, SKILL_COUNT> Player::persistentUpgrades         = {0,0,0,0,0,0};
 bool                         Player::persistentSecondChanceUsed = false;
+int                          Player::persistentTotemCharges     = 0;
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 Player::Player(float x, float y) : GameObject(x, y) {
@@ -75,6 +76,10 @@ Player::Player(float x, float y) : GameObject(x, y) {
     dashDuration      = 0.2f;
     dashCooldownTimer = 0.f;
     dashTimer         = 0.f;
+
+    monsterBuffTimer    = 0.f;
+    monsterBuffBaseSpeed = 0.f;
+    monsterOneHitKill   = false;
 
     isAttacking         = false;
     attackTimer         = 0.f;
@@ -189,6 +194,21 @@ void Player::takeDamage(int amount) {
     if (hp <= 0) { hp = 0; isDead = true; }
 }
 
+void Player::healFull() {
+    hp = maxHp;
+}
+
+void Player::applyMonsterBuff() {
+    monsterBuffTimer  = 10.f;
+    monsterOneHitKill = true;
+    speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f + 200.f; // ultra fast
+    hp = std::min(hp + 1, maxHp); // heal 1 HP
+}
+
+void Player::addTotemCharge() {
+    persistentTotemCharges++;
+}
+
 bool Player::consumeSecondChance() {
     if (persistentUpgrades[SK_SECOND_CHANCE] > 0 && !persistentSecondChanceUsed) {
         hp = maxHp;
@@ -196,7 +216,16 @@ bool Player::consumeSecondChance() {
         persistentSecondChanceUsed = true;
         isInvincible       = true;
         invincibilityTimer = 3.0f;
-        std::cout << "[Player] Second Chance triggered!\n";
+        std::cout << "[Player] Second Chance (skill) triggered!\n";
+        return true;
+    }
+    if (persistentTotemCharges > 0) {
+        hp = maxHp;
+        isDead = false;
+        persistentTotemCharges--;
+        isInvincible       = true;
+        invincibilityTimer = 3.0f;
+        std::cout << "[Player] Second Chance (totem) triggered!\n";
         return true;
     }
     return false;
@@ -204,6 +233,7 @@ bool Player::consumeSecondChance() {
 
 void Player::resetRunStats() {
     persistentSecondChanceUsed = false;
+    persistentTotemCharges     = 0;
     // XP, level, skillpoints and upgrades intentionally persist across deaths
 }
 
@@ -306,6 +336,15 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 void Player::update(float dt, sf::RenderWindow& window) {
+    if (monsterBuffTimer > 0.f) {
+        monsterBuffTimer -= dt;
+        if (monsterBuffTimer <= 0.f) {
+            // Buff expired – restore normal speed
+            speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
+            monsterOneHitKill = false;
+        }
+    }
+
     updateAttack(dt, window);
 
     if (isInvincible) {

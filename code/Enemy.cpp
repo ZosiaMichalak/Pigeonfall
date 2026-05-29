@@ -11,14 +11,35 @@ Enemy::Enemy(float x, float y) : GameObject(x, y) {
     shape.setFillColor(sf::Color::Red);
     shape.setOrigin(4.5f, 4.5f);
     shape.setPosition(position);
+    
+    // NAPRAWA: Zabezpieczenie pozycji początkowej dla sprite'a
+    sprite.setPosition(position);
 
     hpBarBack.setSize(sf::Vector2f(9.f, 1.5f));
     hpBarBack.setFillColor(sf::Color(50, 50, 50));
     hpBarBack.setOrigin(4.5f, 0.75f);
+    // NAPRAWA: Ustawienie pozycji paska HP w momencie spawnu
+    hpBarBack.setPosition(position.x, position.y - 10.f);
 
     hpBarFront.setSize(sf::Vector2f(9.f, 1.5f));
     hpBarFront.setFillColor(sf::Color::Red);
     hpBarFront.setOrigin(4.5f, 0.75f);
+    // NAPRAWA: Ustawienie pozycji paska HP w momencie spawnu
+    hpBarFront.setPosition(position.x, position.y - 10.f);
+}
+
+void Enemy::tickAnim(float dt) {
+    animTimer += dt;
+    if (animTimer >= frameDur) {
+        animTimer -= frameDur;
+        animCol = (animCol + 1) % animMaxCols;
+    }
+    int col = animCol % animSheetCols;
+    int row = animCol / animSheetCols;
+    sprite.setTextureRect(sf::IntRect(col * frameW, row * frameH, frameW, frameH));
+    sprite.setPosition(position);
+    // Mirror horizontally when facing left
+    sprite.setScale(facingLeft ? 1.f : -1.f, 1.f);
 }
 
 void Enemy::takeDamage(int damage) {
@@ -37,7 +58,11 @@ void Enemy::takeDamage(int damage) {
 
 void Enemy::draw(sf::RenderWindow& window) {
     if (!isActive()) return;
-    window.draw(shape);
+    if (hasSprite) {
+        window.draw(sprite);
+    } else {
+        window.draw(shape);
+    }
     window.draw(hpBarBack);
     window.draw(hpBarFront);
 }
