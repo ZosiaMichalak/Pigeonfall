@@ -6,6 +6,9 @@
 #include <array>
 #include <string>
 
+// Deklaracja wyprzedzająca struktury SaveData
+struct SaveData;
+
 enum class AnimState { IDLE, WALK, DASH, ATTACK };
 
 // ── Skill tree ────────────────────────────────────────────────────────────────
@@ -36,112 +39,101 @@ static const SkillDef SKILL_DEFS[SKILL_COUNT] = {
 // ── Player ────────────────────────────────────────────────────────────────────
 class Player : public GameObject {
 private:
+    // Statyczne dane trwałe między uruchomieniami/pokojami
     static int                          persistentXP;
     static int                          persistentLevel;
     static int                          persistentSkillPoints;
     static int                          persistentXpToNext;
     static std::array<int, SKILL_COUNT> persistentUpgrades;
     static bool                         persistentSecondChanceUsed;
-    static int                          persistentTotemCharges; // extra SC from Totem items
+    static int                          persistentTotemCharges;
 
-    sf::Sprite         sprite;
-    sf::Texture        textureIdle;
-    sf::Texture        textureWalk;
-    sf::Texture        textureAttack;
-    sf::Texture        textureDash;       // 7 frames, 50x32 each
+    // Dane bieżącej instancji gracza
+    int xp;
+    int level;
+    int skillPoints;
+    int xpToNextLevel;
+    std::array<int, SKILL_COUNT> upgradeLevels;
+    
+    int hp;
+    int maxHp;
+    int attackDamage;
+    
+    float attackCooldownTimer;
+    float attackCooldownMax;
+    float dashCooldownTimer;
+    float dashCooldown;
+    float monsterBuffTimer;
+    
+    bool isInvincible;
+    float invincibilityTimer;
+    bool isAttacking;
+    bool isDashing;
+    
+    bool  isDead;
+    bool  facingLeft;
+    float baseSpeed;
+    float speed;
+    float animationTimer;
+    float frameDuration;
+    AnimState currentAnim;
+    sf::Vector2f dashDir;
+    float dashTimer;
+    float dashDuration;
+    float monsterBuffBaseSpeed;
+    bool  monsterOneHitKill;
+    float attackTimer;
+    float attackDuration;
+    float attackAngle;
+    int   slashFrameWidth;
+    int   slashFrameHeight;
+
+    // Tekstury i sprite'y SFML
+    sf::Texture textureIdle;
+    sf::Texture textureWalk;
+    sf::Texture textureAttack;
+    sf::Texture textureDash;
+    sf::Texture slashTexture;
+    sf::Sprite sprite;
+    sf::Sprite slashSprite;
+    sf::IntRect currentFrame;
     sf::RectangleShape fallbackShape;
 
+    int currentColumn;
+    int maxColumns;
+    int sheetCols;
+    int frameWidth;
+    int frameHeight;
+    
     bool hasIdleTexture;
     bool hasWalkTexture;
     bool hasAttackTexture;
     bool hasDashTexture;
-    bool facingLeft;
-
-    void applyFacingScale();
-
-    // Animation — frameWidth/Height change per state (dash=50x32, rest=32x32)
-    AnimState   currentAnim;
-    sf::IntRect currentFrame;
-    float animationTimer;
-    float frameDuration;
-    int   frameWidth;
-    int   frameHeight;
-    int   currentColumn;
-    int   maxColumns;
-    int   sheetCols;
-
-    // Helper: switch animation state, resets column/timer
-    void setAnim(AnimState anim);
-
-    // Movement
-    float speed;
-    float baseSpeed;
-
-    bool         isDashing;
-    float        dashTimer;
-    float        dashDuration;
-    float        dashCooldownTimer;
-    float        dashCooldown;
-    sf::Vector2f dashDir;
-
-    // Attack
-    bool  isAttacking;
-    float attackTimer;
-    float attackDuration;
-    float attackCooldownTimer;
-    float attackCooldownMax;
-    int   attackDamage;
-    float attackAngle;
+    bool hasSlashTexture;
+    
+    int slashMaxFrames;
+    int slashCols;
 
     sf::RectangleShape swordHitbox;
 
-    void updateAttack(float dt, sf::RenderWindow& window);
-
-    // HP
-    int   hp;
-    int   maxHp;
-    bool  isInvincible;
-    float invincibilityTimer;
-    bool  isDead;
-
-    // XP / Level
-    int xp;
-    int xpToNextLevel;
-    int level;
-    int skillPoints;
-
-    std::array<int, SKILL_COUNT> upgradeLevels;
-
+    // Prywatne metody pomocnicze
+    void applyFacingScale();
     void applySkillStats();
-
-    // Monster Energy buff
-    float monsterBuffTimer;
-    float monsterBuffBaseSpeed;
-    bool  monsterOneHitKill;
-
-    sf::Texture slashTexture;
-    sf::Sprite  slashSprite;
-    bool        hasSlashTexture;
-    int         slashCols;
-    int         slashMaxFrames;
-    int         slashFrameWidth;
-    int         slashFrameHeight;
+    void setAnim(AnimState anim);
+    void updateAttack(float dt, sf::RenderWindow& window);
 
 public:
     Player(float x, float y);
 
+    void applyLoadedSave(const SaveData& sd);
+
     void update(float dt, sf::RenderWindow& window) override;
     void draw(sf::RenderWindow& window) override;
+    
+    void startDash(sf::Vector2f moveDir);
 
-    static void resetRunStats();
-
-    void takeDamage(int amount);
-    bool consumeSecondChance();
-    bool isDeadNow()    const { return isDead; }
-    bool isDashingNow() const { return isDashing; }
-
-    bool          isAttackingNow()    const { return isAttacking; }
-    sf::FloatRect getSwordBounds()    const { return swordHitbox.getGlobalBounds(); }
+    // Gettery i metody pomocnicze
+    sf::FloatRect getSwordBounds() const { return swordHitbox.getGlobalBounds(); }
     int           getComboHitDamage() const { return attackDamage; }
 
     float getAttackCooldownTimer() const { return attackCooldownTimer; }
@@ -166,13 +158,17 @@ public:
     int  getTotemCharges()       const { return persistentTotemCharges; }
     void addTotemCharge();
 
-    // Monster Energy buff
     void  applyMonsterBuff();
     void  healFull();
     bool  hasMonsterBuff()       const { return monsterBuffTimer > 0.f; }
-    bool  isMonsterOneHit()      const { return monsterOneHitKill; }
-
-    void startDash(sf::Vector2f moveDir);
+    
+    bool isDeadNow() const { return isDead; }
+    bool isAttackingNow() const { return isAttacking; }
+    bool isDashingNow() const { return isDashing; }
+    bool isMonsterOneHit() const { return monsterOneHitKill; }
+    void takeDamage(int amount);
+    bool consumeSecondChance();
+    static void resetRunStats();
 };
 
-#endif
+#endif // PLAYER_H

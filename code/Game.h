@@ -16,15 +16,22 @@
 #include "HUD.h"
 #include "SkillTreeUI.h"
 #include "VendingUI.h"
+#include "MainMenu.h"
 #include "Coin.h"
 #include "HelperCompanion.h"
 #include "AnnoyingDog.h"
+
+enum class AppState { MENU, PLAYING };
 
 class Game {
 private:
     sf::RenderWindow window;
     sf::Clock        clock;
     sf::Font         font;
+
+    // ── App state ─────────────────────────────────────────────────────────────
+    AppState                  appState;
+    std::unique_ptr<MainMenu> mainMenu;
 
     std::vector<std::unique_ptr<GameObject>> objects;
     std::vector<std::unique_ptr<Room>> rooms;
@@ -58,6 +65,9 @@ private:
     // ── Vending proximity ─────────────────────────────────────────────────────
     bool nearVending;       // true when player is within interaction range
 
+    bool isPaused;
+    int  pauseSel; // Indeks wybranej opcji w menu pauzy
+
     void initWindow();
     void applyWindowMode();
     void applyLetterboxView();
@@ -67,10 +77,16 @@ private:
     void nextRoom();
     void resetRun();
 
+    void drawPauseMenu();
+    void saveGame();
+    void loadGame();
+
     // Returns the closest vending-machine bounds in the current room, or an
     // empty rect if none exist.  Uses Room's prop list via getPropColliders()
     // — we store vending positions separately for proximity checks.
     sf::FloatRect getClosestVendingBounds(sf::Vector2f playerCenter) const;
+
+
 
 public:
     Game();

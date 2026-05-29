@@ -1,4 +1,5 @@
 #include "Game.h"
+#include "SaveSystem.h"
 #include "Bullet.h"
 #include "Car.h"
 #include "Flowers.h"
@@ -27,7 +28,8 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 // ── Constructor ───────────────────────────────────────────────────────────────
 Game::Game()
     : hud(font), skillTree(font), vendingUI(font),
-      totalCoins(0), nearVending(false)
+      totalCoins(0), nearVending(false),
+      isPaused(false), pauseSel(0)
 {
     isFullscreen  = false;
     wasF11Pressed = false;
@@ -46,6 +48,10 @@ Game::Game()
         std::cerr << "[Warning] m5x7.ttf not found!\n";
 
     refreshFontTextures();
+
+    // ── Main menu (shown before gameplay starts) ──────────────────────────────
+    appState = AppState::MENU;
+    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
 
     interactText.setFont(font);
     interactText.setCharacterSize(18);
@@ -74,7 +80,7 @@ Game::Game()
 
 // ── Window management ─────────────────────────────────────────────────────────
 void Game::initWindow() {
-    window.create(sf::VideoMode(800, 450), "Bread_of_Crumbs", sf::Style::Default);
+    window.create(sf::VideoMode(800, 450), "Pigeonfall", sf::Style::Default);
     window.setFramerateLimit(60);
     applyWindowMode();
 }
@@ -82,9 +88,9 @@ void Game::initWindow() {
 void Game::applyWindowMode() {
     if (isFullscreen) {
         sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
-        window.create(desktop, "Bread_of_Crumbs", sf::Style::Fullscreen);
+        window.create(desktop, "Pigeonfall", sf::Style::Fullscreen);
     } else {
-        window.create(sf::VideoMode(800, 450), "Bread_of_Crumbs", sf::Style::Default);
+        window.create(sf::VideoMode(800, 450), "Pigeonfall", sf::Style::Default);
     }
     window.setFramerateLimit(60);
     applyLetterboxView();
@@ -199,6 +205,64 @@ void Game::resetRun() {
     objects.push_back(std::make_unique<Player>(100.f, 100.f));
 }
 
+void Game::saveGame() {
+    Player* playerPtr = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+    if (!playerPtr) return;
+
+    SaveData sd;
+    sd.exists = true;
+
+    sd.level            = playerPtr->getLevel();
+    sd.xp               = playerPtr->getXP();
+    sd.xpToNext         = playerPtr->getXPToNext();
+    sd.skillPoints      = playerPtr->getSkillPoints();
+    sd.secondChanceUsed = playerPtr->isSecondChanceUsed();
+    sd.totemCharges     = playerPtr->getTotemCharges();
+
+    for (int i = 0; i < SKILL_COUNT; ++i) {
+        sd.upgrades[i] = playerPtr->getUpgradeLevel(i);
+    }
+
+    sd.roomIndex   = currentRoomIndex;
+    sd.coins       = totalCoins;
+    sd.heldItem    = heldItem;
+    sd.fullscreen  = isFullscreen;
+    sd.musicVolume = 100;
+
+    SaveSystem::save(sd);
+}
+
+void Game::drawPauseMenu() {
+    sf::RectangleShape overlay(sf::Vector2f(VIEW_W, VIEW_H));
+    overlay.setFillColor(sf::Color(0, 0, 0, 180)); 
+    window.draw(overlay);
+
+    sf::Text pauseTitle("PAUSE", font, 24);
+    pauseTitle.setFillColor(sf::Color::White);
+    pauseTitle.setPosition(VIEW_W / 2.f - pauseTitle.getGlobalBounds().width / 2.f, 30.f);
+    window.draw(pauseTitle);
+
+    std::vector<std::string> pauseItems = { "SAVE GAME", "OPTIONS", "QUIT" };
+    
+    for (int i = 0; i < 3; ++i) {
+        sf::Text itemText(pauseItems[i], font, 16);
+        
+        if (i == pauseSel) {
+            itemText.setFillColor(sf::Color(255, 210, 50)); 
+            
+            sf::Text marker(">", font, 16);
+            marker.setFillColor(sf::Color(255, 210, 50));
+            marker.setPosition(VIEW_W / 2.f - 60.f, 85.f + i * 25.f);
+            window.draw(marker);
+        } else {
+            itemText.setFillColor(sf::Color(140, 130, 160));
+        }
+        
+        itemText.setPosition(VIEW_W / 2.f - 40.f, 85.f + i * 25.f);
+        window.draw(itemText);
+    }
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────────
 void Game::run() {
     while (window.isOpen()) {
@@ -207,76 +271,143 @@ void Game::run() {
             if (event.type == sf::Event::Closed)  window.close();
             if (event.type == sf::Event::Resized) applyLetterboxView();
 
-            if (event.type == sf::Event::KeyPressed) {
-                if (event.key.code == sf::Keyboard::F11 && !wasF11Pressed) {
-                    isFullscreen = !isFullscreen;
+            // ── Menu state: feed all events to MainMenu ───────────────────────
+            if (appState == AppState::MENU) {
+                MenuAction action = mainMenu->handleEvent(event);
+                if (action == MenuAction::NEW_GAME) {
+                    resetRun();
+                    appState = AppState::PLAYING;
+                }
+                else if (action == MenuAction::LOAD_GAME) {
+                    SaveData sd = SaveSystem::load();
+                    if (sd.exists) {
+                        resetRun();
+                        if (!objects.empty()) {
+                            if (auto* p = dynamic_cast<Player*>(objects[0].get())) {
+                                p->applyLoadedSave(sd);
+                            }
+                        }
+                        isFullscreen = sd.fullscreen;
+                        applyWindowMode();
+                        heldItem    = sd.heldItem;
+                        totalCoins  = sd.coins;
+                        currentRoomIndex = 0;
+                        for (int i = 0; i < sd.roomIndex; ++i) nextRoom();
+                    }
+                    appState = AppState::PLAYING;
+                }
+                else if (action == MenuAction::QUIT) {
+                    window.close();
+                }
+
+                if (mainMenu->fullscreen() != isFullscreen) {
+                    isFullscreen = mainMenu->fullscreen();
                     applyWindowMode();
-                    wasF11Pressed = true;
+                    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                }
+                continue; 
+            }
+
+            // ── Gameplay state input ──────────────────────────────────────────
+            if (appState == AppState::PLAYING) {
+                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Tab) {
+                    isPaused = !isPaused;
+                    pauseSel = 0;
+                    continue; 
                 }
 
-                // ── Vending UI input ──────────────────────────────────────────
-                if (vendingUI.isOpen()) {
-                    if (event.key.code == sf::Keyboard::Up ||
-                        event.key.code == sf::Keyboard::W)
-                        vendingUI.moveSelection(-1);
-
-                    if (event.key.code == sf::Keyboard::Down ||
-                        event.key.code == sf::Keyboard::S)
-                        vendingUI.moveSelection(+1);
-
-                    if (event.key.code == sf::Keyboard::Return ||
-                        event.key.code == sf::Keyboard::Space)
-                    {
-                        std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
-                        if (!bought.empty())
-                            heldItem = bought;
+                if (isPaused) {
+                    if (event.type == sf::Event::KeyPressed) {
+                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W) {
+                            pauseSel = (pauseSel - 1 + 3) % 3;
+                        }
+                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S) {
+                            pauseSel = (pauseSel + 1) % 3;
+                        }
+                        if (event.key.code == sf::Keyboard::Enter || event.key.code == sf::Keyboard::Space) {
+                            if (pauseSel == 0) {
+                                saveGame();
+                                isPaused = false;
+                            } 
+                            else if (pauseSel == 1) {
+                                isFullscreen = !isFullscreen;
+                                applyWindowMode();
+                            } 
+                            else if (pauseSel == 2) {
+                                mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                                appState = AppState::MENU;
+                                isPaused = false;
+                            }
+                        }
                     }
-
-                    if (event.key.code == sf::Keyboard::Escape ||
-                        event.key.code == sf::Keyboard::E)
-                        vendingUI.close();
-
-                    continue;
+                    continue; 
                 }
 
-                // ── Skill tree input ──────────────────────────────────────────
-                if (skillTree.isOpen()) {
-                    if (event.key.code == sf::Keyboard::Up ||
-                        event.key.code == sf::Keyboard::W)
-                        skillTree.moveSelection(-1);
-
-                    if (event.key.code == sf::Keyboard::Down ||
-                        event.key.code == sf::Keyboard::S)
-                        skillTree.moveSelection(+1);
-
-                    if (event.key.code == sf::Keyboard::Return ||
-                        event.key.code == sf::Keyboard::Space  ||
-                        event.key.code == sf::Keyboard::E)
-                    {
-                        Player* p = objects.empty()
-                            ? nullptr : dynamic_cast<Player*>(objects[0].get());
-                        skillTree.buySelected(p);
+                if (event.type == sf::Event::KeyPressed) {
+                    if (event.key.code == sf::Keyboard::F11 && !wasF11Pressed) {
+                        isFullscreen = !isFullscreen;
+                        applyWindowMode();
+                        wasF11Pressed = true;
                     }
 
-                    if (event.key.code == sf::Keyboard::Escape ||
-                        event.key.code == sf::Keyboard::M)
-                        skillTree.close();
+                    if (vendingUI.isOpen()) {
+                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                            vendingUI.moveSelection(-1);
+
+                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
+                            vendingUI.moveSelection(+1);
+
+                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space) {
+                            std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
+                            if (!bought.empty()) heldItem = bought;
+                        }
+
+                        if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::E)
+                            vendingUI.close();
+
+                        continue;
+                    }
+
+                    if (skillTree.isOpen()) {
+                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                            skillTree.moveSelection(-1);
+
+                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
+                            skillTree.moveSelection(+1);
+
+                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space || event.key.code == sf::Keyboard::E) {
+                            Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+                            skillTree.buySelected(p);
+                        }
+
+                        if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::M)
+                            skillTree.close();
+                    }
+                }
+                if (event.type == sf::Event::KeyReleased) {
+                    if (event.key.code == sf::Keyboard::F11) wasF11Pressed = false;
                 }
             }
-            if (event.type == sf::Event::KeyReleased)
-                if (event.key.code == sf::Keyboard::F11) wasF11Pressed = false;
         }
 
         float dt = clock.restart().asSeconds();
         if (dt > 0.1f) dt = 0.1f;
 
-        update(dt);
-        render();
+        if (appState == AppState::MENU) {
+            window.clear(sf::Color::Black);
+            mainMenu->render(window);
+            window.display();
+        } else {
+            update(dt);
+            render();
+        }
     }
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
 void Game::update(float dt) {
+    if (isPaused) return;
+
     Player* playerPtr = objects.empty()
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
 
@@ -521,7 +652,6 @@ void Game::update(float dt) {
                 sf::FloatRect enemyBounds  = enemy->getBounds();
 
                 if (playerBounds.intersects(enemyBounds)) {
-                    // Skip dash-enemy pushing while it is mid-dash (it deals damage instead)
                     bool skipPush = false;
                     if (auto* de = dynamic_cast<DashEnemy*>(enemy)) {
                         if (de->isDashingNow()) {
@@ -564,7 +694,6 @@ void Game::update(float dt) {
                             }
                         }
 
-                        // Apply pushes
                         playerPtr->setPosition(sf::Vector2f(
                             playerBounds.left + playerBounds.width  / 2.f + pushPlayer.x,
                             playerBounds.top  + playerBounds.height / 2.f + pushPlayer.y
@@ -572,8 +701,6 @@ void Game::update(float dt) {
 
                         enemy->nudgePosition(pushEnemy);
 
-                        // Touching the enemy deals damage (regular contact)
-                        // ZMIANA: Wyłączamy obrażenia z dotyku dla DashEnemy ORAZ BulletEnemy.
                         if (!playerPtr->isDashingNow() && 
                             !dynamic_cast<DashEnemy*>(enemy) && 
                             !dynamic_cast<BulletEnemy*>(enemy)) 
@@ -717,6 +844,10 @@ void Game::render() {
 
     if (vendingUI.isOpen())
         vendingUI.render(window, totalCoins, heldItem);
+
+    if (isPaused) {
+        drawPauseMenu();
+    }
 
     window.display();
 }
