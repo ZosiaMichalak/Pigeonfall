@@ -168,18 +168,13 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
     }
     window.draw(coinText);
 
-    // 4. [M] Skills hint
+    // 4. [Tab] Skills hint — fixed anchor; held-item label sits to the right of it
     if (player && player->isActive()) {
         bool hasPoints = player->getSkillPoints() > 0;
-        sf::Text skillsHint("[M] Skills", font, 16);
-        skillsHint.setScale(0.75f, 0.75f); // Skalowanie symulujące rozmiar 12
+        sf::Text skillsHint("[Tab] Skills", font, 16);
+        skillsHint.setScale(0.75f, 0.75f);
         skillsHint.setFillColor(hasPoints ? sf::Color(255, 210, 30) : sf::Color(120, 120, 120));
-        
-        sf::FloatRect hintBounds = skillsHint.getGlobalBounds();
-        skillsHint.setPosition(
-            px((400.f - hintBounds.width) / 2.f),
-            px(BAR_Y + 1.f)
-        );
+        skillsHint.setPosition(px(150.f), px(BAR_Y + 1.f));
         window.draw(skillsHint);
     }
 }

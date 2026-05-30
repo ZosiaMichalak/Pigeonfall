@@ -128,7 +128,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
         }
     }
 
-    sf::Text hint("W/S  ENTER=buy  ESC/M=close", font, 16);
+    sf::Text hint("W/S  E=buy  Tab/Q=close", font, 16);
     hint.setFillColor(sf::Color(90, 80, 125));
     hint.setPosition(
         px(panelX + pw / 2.f - hint.getLocalBounds().width / 2.f),

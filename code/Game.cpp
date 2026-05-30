@@ -28,10 +28,10 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 // ── Constructor ───────────────────────────────────────────────────────────────
 Game::Game()
     : hud(font), skillTree(font), vendingUI(font),
-      totalCoins(0), nearVending(false),
+      totalCoins(50), nearVending(false),
       isPaused(false), pauseSel(0)
 {
-    isFullscreen  = false;
+    isFullscreen  = true;
     wasF11Pressed = false;
     wasEPressed   = false;
     wasFPressed   = false;
@@ -266,6 +266,7 @@ void Game::nextRoom() {
     int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
     enemiesRemainingToSpawn = totalEnemies;
 
+    vendingUI.rollItems();   // re-roll shop stock for the new room
     vendingUI.close();
     nearVending = false;
 }
@@ -282,7 +283,7 @@ void Game::resetRun() {
 
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
-    totalCoins              = 0;
+    totalCoins              = 50;
     heldItem                = "";
     skillTree.close();
     vendingUI.close();
@@ -297,6 +298,8 @@ void Game::resetRun() {
     objects.clear();
     objects.push_back(std::make_unique<Player>(
         starterTmpl.playerStart.x, starterTmpl.playerStart.y));
+
+    vendingUI.rollItems();   // randomise shop stock for the first room
 }
 
 // ── Save / Load ───────────────────────────────────────────────────────────────
@@ -371,6 +374,12 @@ void Game::drawPauseMenu() {
         itemText.setPosition(VIEW_W / 2.f - 40.f, 85.f + i * 25.f);
         window.draw(itemText);
     }
+
+    sf::Text hint("W/S  E=select  Q=close", font, 16);
+    hint.setScale(0.65f, 0.65f);
+    hint.setFillColor(sf::Color(90, 80, 125));
+    hint.setPosition(VIEW_W / 2.f - hint.getGlobalBounds().width / 2.f, VIEW_H - 20.f);
+    window.draw(hint);
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -417,7 +426,7 @@ void Game::run() {
 
             // ── Gameplay state input ──────────────────────────────────────────
             if (appState == AppState::PLAYING) {
-                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Tab) {
+                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
                     isPaused = !isPaused;
                     pauseSel = 0;
                     continue;
@@ -429,7 +438,7 @@ void Game::run() {
                             pauseSel = (pauseSel - 1 + 3) % 3;
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             pauseSel = (pauseSel + 1) % 3;
-                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space) {
+                        if (event.key.code == sf::Keyboard::E) {
                             if      (pauseSel == 0) { saveGame(); isPaused = false; }
                             else if (pauseSel == 1) { isFullscreen = !isFullscreen; applyWindowMode(); }
                             else if (pauseSel == 2) {
@@ -438,6 +447,7 @@ void Game::run() {
                                 isPaused = false;
                             }
                         }
+                        if (event.key.code == sf::Keyboard::Q) { isPaused = false; }
                     }
                     continue;
                 }
@@ -455,11 +465,11 @@ void Game::run() {
                             vendingUI.moveSelection(-1);
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             vendingUI.moveSelection(+1);
-                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space) {
+                        if (event.key.code == sf::Keyboard::E) {
                             std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
                             if (!bought.empty()) heldItem = bought;
                         }
-                        if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::E)
+                        if (event.key.code == sf::Keyboard::Q)
                             vendingUI.close();
                         continue;
                     }
@@ -470,12 +480,11 @@ void Game::run() {
                             skillTree.moveSelection(-1);
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             skillTree.moveSelection(+1);
-                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space ||
-                            event.key.code == sf::Keyboard::E) {
+                        if (event.key.code == sf::Keyboard::E) {
                             Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
                             skillTree.buySelected(p);
                         }
-                        if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::M)
+                        if (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Tab)
                             skillTree.close();
                     }
                 }
@@ -515,7 +524,7 @@ void Game::update(float dt) {
 
     if (vendingUI.isOpen() || skillTree.isOpen()) return;
 
-    bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::M);
+    bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::Tab);
     if (mNow && !wasMPressed) skillTree.toggle();
     wasMPressed = mNow;
 
@@ -911,19 +920,13 @@ void Game::render() {
         }
     }
 
-    // Held item label
+    // Held item label — sits right of [Tab] Skills (anchored at x=150), before coins at x=330
     if (!heldItem.empty()) {
         sf::Text heldLabel("[F] " + heldItem, font, 16);
         heldLabel.setScale(0.75f, 0.75f);
         heldLabel.setFillColor(sf::Color(180, 230, 180));
-        float hw = heldLabel.getGlobalBounds().width;
-        float hx = 328.f - hw - 4.f;
-        if (hx < 160.f) {
-            heldLabel.setScale(0.6f, 0.6f);
-            hw = heldLabel.getGlobalBounds().width;
-            hx = 328.f - hw - 4.f;
-        }
-        heldLabel.setPosition(std::max(2.f, hx), 195.f + 2.f);
+        // [Tab] Skills starts at 150 and is ~70px wide at 0.75 scale → start at 226
+        heldLabel.setPosition(226.f, 195.f + 1.f);
         window.draw(heldLabel);
     }
 

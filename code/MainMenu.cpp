@@ -113,11 +113,11 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
         if (key == sf::Keyboard::S || key == sf::Keyboard::Down)
             optSel = (optSel + 1) % 2;
 
-        if (key == sf::Keyboard::Return || key == sf::Keyboard::Space) {
+        if (key == sf::Keyboard::E) {
             if (optSel == 0) { optFullscreen = !optFullscreen; optChanged = true; }
             else             { screen = MenuScreen::MAIN; }
         }
-        if (key == sf::Keyboard::Escape) screen = MenuScreen::MAIN;
+        if (key == sf::Keyboard::Q) screen = MenuScreen::MAIN;
         return MenuAction::NONE;
     }
 
@@ -127,14 +127,14 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
     if (key == sf::Keyboard::S || key == sf::Keyboard::Down)
         mainSel = (mainSel + 1) % n;
 
-    if (key == sf::Keyboard::Return || key == sf::Keyboard::Space) {
+    if (key == sf::Keyboard::E) {
         const std::string& s = mainItems[mainSel];
         if (s == "New Game")  return MenuAction::NEW_GAME;
         if (s == "Load Game") return MenuAction::LOAD_GAME;
         if (s == "Options")   { screen = MenuScreen::OPTIONS; optSel = 0; }
         if (s == "Quit")      return MenuAction::QUIT;
     }
-    if (key == sf::Keyboard::Escape) return MenuAction::QUIT;
+    if (key == sf::Keyboard::Q) return MenuAction::QUIT;
     return MenuAction::NONE;
 }
 
@@ -502,7 +502,7 @@ void MainMenu::render(sf::RenderWindow& window) {
         }
 
         // Hint
-        sf::Text hint = makeText("W/S  ENTER", 16, sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
+        sf::Text hint = makeText("W/S  E=select", 16, sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
         hint.setScale(0.65f, 0.65f);
         float hw = hint.getGlobalBounds().width;
         hint.setPosition(rpx((VIEW_W - hw) * 0.5f), rpx(VIEW_H - 14.f));
@@ -604,7 +604,7 @@ void MainMenu::render(sf::RenderWindow& window) {
             }
         }
 
-        sf::Text hint = makeText("ENTER=toggle/select  ESC=back", 16,
+        sf::Text hint = makeText("E=select  Q=back", 16,
                                  sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
         hint.setScale(0.65f, 0.65f);
         float hw = hint.getGlobalBounds().width;

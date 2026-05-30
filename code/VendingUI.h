@@ -30,7 +30,8 @@ public:
     explicit VendingUI(sf::Font& font);
 
     bool isOpen() const { return open; }
-    void openShop();   // re-rolls items and opens
+    void rollItems();  // call once on room entry to randomise the 3 slots
+    void openShop();   // opens the UI (no re-roll)
     void close();
 
     // Navigation & purchase

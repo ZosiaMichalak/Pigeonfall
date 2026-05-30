@@ -15,16 +15,18 @@ VendingUI::VendingUI(sf::Font& font)
     slotIndices = {0, 1, 2};
 }
 
-void VendingUI::openShop() {
-    // Pick 3 unique random items from the catalogue
+void VendingUI::rollItems() {
+    // Pick 3 unique random items from the catalogue (Fisher-Yates on first 3)
     std::array<int, CATALOGUE_SIZE> pool = {0, 1, 2, 3, 4};
-    // Fisher-Yates shuffle (first 3)
     for (int i = 0; i < SHOP_SLOTS; ++i) {
         int j = i + std::rand() % (CATALOGUE_SIZE - i);
         std::swap(pool[i], pool[j]);
         slotIndices[i] = pool[i];
     }
     selectedSlot = 0;
+}
+
+void VendingUI::openShop() {
     open = true;
 }
 
@@ -157,7 +159,7 @@ void VendingUI::render(sf::RenderWindow& window, int totalCoins, const std::stri
             else if (!canAfford)
                 status.setString("Not enough coins");
             else
-                status.setString("ENTER / E to buy");
+                status.setString("E to buy");
             status.setFillColor(blocked || !canAfford
                 ? sf::Color(160, 60, 60) : sf::Color(120, 200, 120));
             status.setPosition(px(CARD_X + 18.f), px(cardY + CARD_H - 14.f));
@@ -166,7 +168,7 @@ void VendingUI::render(sf::RenderWindow& window, int totalCoins, const std::stri
     }
 
     // Footer hint
-    sf::Text hint("W/S navigate  ENTER buy  ESC/E close", font, 16);
+    sf::Text hint("W/S navigate  E=buy  Q=close", font, 16);
     hint.setScale(0.75f, 0.75f);
     hint.setFillColor(sf::Color(60, 100, 60));
     hint.setPosition(
