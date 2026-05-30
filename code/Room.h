@@ -32,10 +32,10 @@ struct PropDef {
 struct RoomTemplate {
     std::string             name;
     int                     background;
-    std::vector<EnemySpawn> enemies;
     std::vector<PropDef>    props;
     sf::Vector2f            doorPosition;
-    float doorRotation;
+    float                   doorRotation;
+    sf::Vector2f            playerStart;   // where the player spawns in this room
 };
 
 namespace RoomTemplates {
@@ -52,13 +52,11 @@ public:
     int  getEnemyCount() const { return enemyCount; }
     bool getIsCleared()  const { return isCleared; }
 
-    sf::Vector2f getDoorPosition() const { return doorPosition; }
-    float getDoorRotation() const { return doorRotation; }
+    sf::Vector2f getDoorPosition()  const { return doorPosition; }
+    float        getDoorRotation()  const { return doorRotation; }
+    sf::Vector2f getPlayerStart()   const { return playerStart; }
 
     void setCleared(bool c) { isCleared = c; }
-    const std::vector<EnemySpawn>& getEnemySpawns() const { return enemySpawns; }
-
-
 
     std::vector<sf::FloatRect> getPropColliders() const;
     void loadAssets();
@@ -71,14 +69,14 @@ private:
     sf::Color    floorColor;
     int          bgIndex;
     bool         hasBackground;
-    float doorRotation;
+    float        doorRotation;
 
     sf::Vector2f doorPosition;
+    sf::Vector2f playerStart;
 
     sf::Texture  bgTexture;
     sf::Sprite   bgSprite;
 
-    std::vector<EnemySpawn>          enemySpawns;
     std::vector<std::unique_ptr<Prop>> props;
 };
 

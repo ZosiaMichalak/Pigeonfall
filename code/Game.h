@@ -40,7 +40,9 @@ private:
 
     std::mt19937 rng;
 
-    sf::RectangleShape doorShape;
+    sf::RectangleShape doorShape;   // kept for collision bounds only (invisible)
+    sf::Texture        doorTexture;
+    sf::Sprite         doorSprite;
     sf::Text           interactText;
 
     bool wasEPressed;
@@ -66,7 +68,20 @@ private:
     bool nearVending;       // true when player is within interaction range
 
     bool isPaused;
-    int  pauseSel; // Indeks wybranej opcji w menu pauzy
+    int  pauseSel;
+
+    // ── Floating damage numbers ───────────────────────────────────────────────
+    struct DamageNumber {
+        sf::Text     text;
+        sf::Vector2f velocity;
+        float        lifetime;   // seconds remaining
+        float        maxLifetime;
+    };
+    std::vector<DamageNumber> damageNumbers;
+
+    void spawnDamageNumber(sf::Vector2f pos, int damage, bool isBig = false);
+    void updateDamageNumbers(float dt);
+    void drawDamageNumbers();
 
     void initWindow();
     void applyWindowMode();

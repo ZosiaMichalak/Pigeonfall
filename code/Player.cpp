@@ -89,6 +89,10 @@ Player::Player(float x, float y) : GameObject(x, y) {
     attackCooldownMax   = 0.35f;
     attackAngle         = 0.f;
 
+    comboCount          = 0;
+    comboWindowTimer    = 0.f;
+    hitConnectedThisSwing = false;
+
     // Niewidzialny hitbox
     swordHitbox.setSize(sf::Vector2f(26.f, 18.f));
     swordHitbox.setFillColor(sf::Color(255, 255, 200, 130));
@@ -261,12 +265,20 @@ sf::FloatRect Player::getBounds() const {
 void Player::updateAttack(float dt, sf::RenderWindow& window) {
     if (attackCooldownTimer > 0.f) attackCooldownTimer -= dt;
 
+    // Tick the combo expiry window
+    if (comboWindowTimer > 0.f) {
+        comboWindowTimer -= dt;
+        if (comboWindowTimer <= 0.f)
+            comboCount = 0;
+    }
+
     if (sf::Mouse::isButtonPressed(sf::Mouse::Left) &&
         !isAttacking && attackCooldownTimer <= 0.f)
     {
-        isAttacking         = true;
-        attackTimer         = attackDuration;
-        attackCooldownTimer = attackCooldownMax;
+        isAttacking           = true;
+        attackTimer           = attackDuration;
+        attackCooldownTimer   = attackCooldownMax;
+        hitConnectedThisSwing = false; // reset per-swing hit flag
 
         sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
         sf::Vector2f delta    = mousePos - position;
@@ -450,6 +462,21 @@ void Player::startDash(sf::Vector2f moveDir) {
     dashDir = (moveDir.x == 0.f && moveDir.y == 0.f)
         ? (facingLeft ? sf::Vector2f(-1.f, 0.f) : sf::Vector2f(1.f, 0.f))
         : moveDir;
+}
+
+// ── Combo system ──────────────────────────────────────────────────────────────
+// Called by Game when the sword hitbox actually overlaps an enemy.
+// Advances the combo counter (max 3) and returns the damage for this hit.
+// The 3rd hit in a combo deals triple damage.
+int Player::registerHit() {
+    if (!hitConnectedThisSwing) {
+        hitConnectedThisSwing = true;
+        comboCount = (comboCount % 3) + 1; // 1 → 2 → 3 → 1 ...
+        comboWindowTimer = 1.2f;           // player has 1.2 s to continue combo
+    }
+    int dmg = attackDamage;
+    if (comboCount == 3) dmg *= 3;
+    return dmg;
 }
 
 void Player::applyLoadedSave(const SaveData& sd) {

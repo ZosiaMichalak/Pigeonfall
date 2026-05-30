@@ -9,24 +9,27 @@
 #include <ctime>
 #include <random>
 
-// Konstruktor ręczny
+// ── Constructors ──────────────────────────────────────────────────────────────
+
 Room::Room(int id, int enemyCount, sf::Color fallbackColor)
     : id(id), enemyCount(enemyCount), isCleared(false), floorColor(fallbackColor),
-      bgIndex(0), hasBackground(false), doorPosition({400.f, 100.f}), doorRotation(0.f) {}
+      bgIndex(0), hasBackground(false),
+      doorPosition({400.f, 100.f}), doorRotation(0.f),
+      playerStart({100.f, 100.f}) {}
 
-// Konstruktor na podstawie szablonu
 Room::Room(int id, const RoomTemplate& tmpl)
-    : id(id), enemyCount(static_cast<int>(tmpl.enemies.size())), isCleared(false),
+    : id(id), enemyCount(0), isCleared(false),
       floorColor(sf::Color(20, 25, 40)), bgIndex(tmpl.background), hasBackground(false),
-      enemySpawns(tmpl.enemies), doorPosition(tmpl.doorPosition), doorRotation(tmpl.doorRotation)
+      doorPosition(tmpl.doorPosition), doorRotation(tmpl.doorRotation),
+      playerStart(tmpl.playerStart)
 {
     for (const auto& p : tmpl.props) {
         switch (p.type) {
-            case PropDef::Type::VENDING:  props.push_back(std::make_unique<Vending>(p.position));          break;
-            case PropDef::Type::TRASH:    props.push_back(std::make_unique<Trash>(p.position));            break;
-            case PropDef::Type::BENCH:    props.push_back(std::make_unique<Bench>(p.position));            break;
-            case PropDef::Type::FLOWERS:  props.push_back(std::make_unique<Flowers>(p.position));          break;
-            case PropDef::Type::HYDRANT:  props.push_back(std::make_unique<Hydrant>(p.position));          break;
+            case PropDef::Type::VENDING:  props.push_back(std::make_unique<Vending>(p.position));            break;
+            case PropDef::Type::TRASH:    props.push_back(std::make_unique<Trash>(p.position));              break;
+            case PropDef::Type::BENCH:    props.push_back(std::make_unique<Bench>(p.position));              break;
+            case PropDef::Type::FLOWERS:  props.push_back(std::make_unique<Flowers>(p.position));            break;
+            case PropDef::Type::HYDRANT:  props.push_back(std::make_unique<Hydrant>(p.position));            break;
             case PropDef::Type::CAR1:     props.push_back(std::make_unique<Car>(p.position, CarType::CAR1)); break;
             case PropDef::Type::CAR2:     props.push_back(std::make_unique<Car>(p.position, CarType::CAR2)); break;
             case PropDef::Type::CAR3:     props.push_back(std::make_unique<Car>(p.position, CarType::CAR3)); break;
@@ -58,48 +61,76 @@ std::vector<sf::FloatRect> Room::getPropColliders() const {
 }
 
 // ── RoomTemplates ─────────────────────────────────────────────────────────────
+// Enemy spawns have been removed from templates entirely.
+// Enemy count and types are decided at runtime in Game::nextRoom().
+// playerStart defines where the player appears when entering this room.
+
 namespace RoomTemplates {
 
 std::vector<RoomTemplate> getAll() {
     return {
-{
-    "Starter Room", 3,
-    {},
-    {{PropDef::Type::HYDRANT, {297.f, 65.f}}, {PropDef::Type::FLOWERS, {113.f, 57.f}}, {PropDef::Type::BENCH, {81.f, 55.f}}, {PropDef::Type::CAR1, {171.f, 108.f}}, {PropDef::Type::CAR3, {319.f, 0.f}}},
-    {400.f, 120.f},0.f
-},
-
-{
-    "1", 0,
-    {{EnemyType::BULLET, {35.f, 170.f}, 1}, {EnemyType::BULLET, {370.f, 173.f}, 1}, {EnemyType::BULLET, {115.f, 17.f}, 1}, {EnemyType::BULLET, {327.f, 22.f}, 1}, {EnemyType::DASH, {367.f, 102.f}, 1}, {EnemyType::DASH, {36.f, 92.f}, 1}},
-    {{PropDef::Type::FLOWERS, {224.f, 24.f}}, {PropDef::Type::FLOWERS, {264.f, 24.f}}, {PropDef::Type::HYDRANT, {136.f, 107.f}}, {PropDef::Type::CAR1, {218.f, 104.f}}, {PropDef::Type::CAR2, {219.f, 135.f}}, {PropDef::Type::BENCH, {35.f, 22.f}}, {PropDef::Type::TRASH, {66.f, 22.f}}, {PropDef::Type::VENDING, {357.f, 4.f}}},
-    {191.f, 2.f}, 90.f
-},
-
-{
-    "2", 1,
-    {{EnemyType::BULLET, {254.f, 54.f}, 1}, {EnemyType::BULLET, {280.f, 121.f}, 1}, {EnemyType::BULLET, {259.f, 169.f}, 1}, {EnemyType::DASH, {111.f, 46.f}, 1}, {EnemyType::DASH, {162.f, 119.f}, 1}, {EnemyType::DASH, {125.f, 169.f}, 1}},
-    {{PropDef::Type::BENCH, {186.f, 24.f}}, {PropDef::Type::CAR1, {329.f, 1.f}}, {PropDef::Type::HYDRANT, {163.f, 33.f}}, {PropDef::Type::CAR3, {329.f, 179.f}}, {PropDef::Type::CAR2, {327.f, 81.f}}},
-    {191.f, 191.f}, 90.f
-}
+        // ── Index 0: Starter Room (no enemies, player starts center) ──────────
+                // ── MyRoom ──
+                // ── MyRoom ──
+                // ── MyRoom ──
+        {
+            "MyRoom", 3,
+            {
+            {PropDef::Type::VENDING, {175.5f, 35.9f}},
+            {PropDef::Type::TRASH, {149.0f, 53.9f}},
+            {PropDef::Type::BENCH, {219.5f, 54.7f}},
+            {PropDef::Type::CAR2, {14.0f, 108.3f}},
+            {PropDef::Type::FLOWERS, {231.4f, 151.3f}},
+            {PropDef::Type::FLOWERS, {271.9f, 151.6f}},
+            {PropDef::Type::HYDRANT, {305.4f, 159.7f}},
+        },
+            {378.3f, 120.8f}, 90.0f,
+            {195.1f, 122.6f}
+        },
 
 
 
 
+        // ── Index 1 ───────────────────────────────────────────────────────────
+        {
+            "Street 1", 0,
+            {
+                {PropDef::Type::FLOWERS,  {224.f,  24.f}},
+                {PropDef::Type::FLOWERS,  {264.f,  24.f}},
+                {PropDef::Type::HYDRANT,  {136.f, 107.f}},
+                {PropDef::Type::CAR1,     {218.f, 104.f}},
+                {PropDef::Type::CAR2,     {219.f, 135.f}},
+                {PropDef::Type::BENCH,    { 35.f,  22.f}},
+                {PropDef::Type::TRASH,    { 66.f,  22.f}},
+                {PropDef::Type::VENDING,  {357.f,   4.f}},
+            },
+            {191.f, 2.f}, 90.f,
+            { 30.f, 110.f}          // player start (enter from left side)
+        },
 
+        // ── Index 2 ───────────────────────────────────────────────────────────
+        {
+            "Street 2", 1,
+            {
+                {PropDef::Type::BENCH,    {186.f,  24.f}},
+                {PropDef::Type::CAR1,     {329.f,   1.f}},
+                {PropDef::Type::HYDRANT,  {163.f,  33.f}},
+                {PropDef::Type::CAR3,     {329.f, 179.f}},
+                {PropDef::Type::CAR2,     {327.f,  81.f}},
+            },
+            {191.f, 191.f}, 90.f,
+            { 30.f, 110.f}
+        },
     };
 }
 
 RoomTemplate getRandom() {
     static std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
     auto all = getAll();
-    
-    // Zabezpieczenie na wypadek, gdyby w tabeli był tylko 1 pokój
-    if (all.size() <= 1) {
-        return all[0];
-    }
-    
-    // Pomijamy indeks 0 ("Starter Room") i losujemy od indeksu 1 do samego końca
+
+    // Always skip index 0 (Starter Room) when picking a random combat room
+    if (all.size() <= 1) return all[0];
+
     std::uniform_int_distribution<int> dis(1, static_cast<int>(all.size()) - 1);
     return all[dis(rng)];
 }

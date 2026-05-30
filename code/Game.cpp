@@ -49,22 +49,7 @@ Game::Game()
 
     refreshFontTextures();
 
-    // ── Main menu (shown before gameplay starts) ──────────────────────────────
-    appState = AppState::MENU;
-    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
-
-    interactText.setFont(font);
-    interactText.setCharacterSize(18);
-    interactText.setFillColor(sf::Color::White);
-    interactText.setString("[E]");
-
-    doorShape.setSize(sf::Vector2f(12.f, 32.f));
-    doorShape.setOrigin(6.f, 16.f);
-    doorShape.setPosition(394.f, 100.f);
-    doorShape.setFillColor(sf::Color(230, 180, 40));
-
-    auto templates = RoomTemplates::getAll();
-
+    // ── Pre-load shared assets ────────────────────────────────────────────────
     Bench::loadTexture();
     Vending::loadTexture();
     Trash::loadTexture();
@@ -73,9 +58,40 @@ Game::Game()
     Flowers::loadTexture();
     Car::loadTextures();
 
-    rooms.push_back(std::make_unique<Room>(0, templates[0]));
+    // ── Main menu ─────────────────────────────────────────────────────────────
+    appState = AppState::MENU;
+    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+
+    interactText.setFont(font);
+    interactText.setCharacterSize(18);
+    interactText.setFillColor(sf::Color::White);
+    interactText.setString("[E]");
+
+    // Door — sprite is 50x80, two 50x40 frames stacked vertically (locked | open)
+    // Rendered at 2x scale = 100x80 game-world px, no rotation applied
+    doorShape.setSize(sf::Vector2f(100.f, 80.f));
+    doorShape.setOrigin(50.f, 40.f);
+    doorShape.setFillColor(sf::Color::Transparent);
+
+    if (doorTexture.loadFromFile("assets/Tram.png")) {
+        doorTexture.setSmooth(false);
+        doorSprite.setTexture(doorTexture);
+        doorSprite.setTextureRect(sf::IntRect(0, 0, 50, 40));
+        doorSprite.setOrigin(25.f, 20.f);
+        doorSprite.setScale(1.7f, 1.7f);
+    }
+
+    // Create the starter room and spawn the player at its playerStart position
+    auto starterTmpl = RoomTemplates::getAll()[0];
+    rooms.push_back(std::make_unique<Room>(0, starterTmpl));
     rooms[0]->loadAssets();
-    objects.push_back(std::make_unique<Player>(100.f, 100.f));
+
+    // Starter room has no enemies and is immediately cleared
+    rooms[0]->setCleared(true);
+    enemiesRemainingToSpawn = 0;
+
+    objects.push_back(std::make_unique<Player>(
+        starterTmpl.playerStart.x, starterTmpl.playerStart.y));
 }
 
 // ── Window management ─────────────────────────────────────────────────────────
@@ -125,6 +141,7 @@ sf::FloatRect Game::getClosestVendingBounds(sf::Vector2f playerCenter) const {
     float bestDist = 1e9f;
 
     for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
+        // Vending machines are taller than other props (height >= 45 game-px)
         if (col.height < 45.f) continue;
 
         sf::Vector2f centre = getRectCenter(col);
@@ -133,25 +150,79 @@ sf::FloatRect Game::getClosestVendingBounds(sf::Vector2f playerCenter) const {
         float d  = std::sqrt(dx*dx + dy*dy);
         if (d < bestDist) { bestDist = d; best = col; }
     }
-    return best; 
+    return best;
 }
 
-// ── Game management ───────────────────────────────────────────────────────────
+// ── Floating damage numbers ───────────────────────────────────────────────────
+void Game::spawnDamageNumber(sf::Vector2f pos, int damage, bool isBig) {
+    DamageNumber dn;
+    dn.text.setFont(font);
+    dn.text.setString(std::to_string(damage));
+    dn.text.setCharacterSize(16);
+
+    if (isBig) {
+        // x3 combo hit — large yellow
+        dn.text.setFillColor(sf::Color(255, 220, 0));
+        dn.text.setScale(1.1f, 1.1f);
+        dn.maxLifetime = 0.75f;
+    } else {
+        // Normal hit — small white
+        dn.text.setFillColor(sf::Color(255, 255, 255));
+        dn.text.setScale(0.6f, 0.6f);
+        dn.maxLifetime = 0.5f;
+    }
+
+    dn.text.setPosition(pos.x - dn.text.getLocalBounds().width * dn.text.getScale().x / 2.f,
+                        pos.y - 8.f);
+    // Float upward with slight random horizontal drift
+    std::uniform_real_distribution<float> drift(-15.f, 15.f);
+    dn.velocity  = { drift(rng), -40.f };
+    dn.lifetime  = dn.maxLifetime;
+    damageNumbers.push_back(std::move(dn));
+}
+
+void Game::updateDamageNumbers(float dt) {
+    for (auto& dn : damageNumbers) {
+        dn.lifetime -= dt;
+        dn.text.move(dn.velocity * dt);
+        // Fade out in the last third of lifetime
+        float alpha = std::min(1.f, dn.lifetime / (dn.maxLifetime * 0.4f));
+        sf::Color c = dn.text.getFillColor();
+        c.a = static_cast<sf::Uint8>(255 * std::max(0.f, alpha));
+        dn.text.setFillColor(c);
+    }
+    damageNumbers.erase(
+        std::remove_if(damageNumbers.begin(), damageNumbers.end(),
+            [](const DamageNumber& d){ return d.lifetime <= 0.f; }),
+        damageNumbers.end());
+}
+
+void Game::drawDamageNumbers() {
+    for (auto& dn : damageNumbers)
+        window.draw(dn.text);
+}
+
+
 void Game::spawnEnemy() {
     std::uniform_real_distribution<float> xDis(50.f, 350.f);
     std::uniform_real_distribution<float> yDis(30.f, 160.f);
     float ex = xDis(rng), ey = yDis(rng);
 
+    // Keep spawn away from the player
     if (!objects.empty()) {
         if (auto* p = dynamic_cast<Player*>(objects[0].get())) {
             sf::Vector2f pp = getRectCenter(p->getBounds());
-            while (std::abs(ex - pp.x) < 40.f && std::abs(ey - pp.y) < 40.f) {
-                ex = xDis(rng); ey = yDis(rng);
+            int tries = 0;
+            while (std::abs(ex - pp.x) < 40.f && std::abs(ey - pp.y) < 40.f && tries < 20) {
+                ex = xDis(rng); ey = yDis(rng); ++tries;
             }
         }
     }
 
-    int tier       = std::min(4, currentRoomIndex / 3);
+    // Tier scales with room depth (capped at 4)
+    int tier = std::min(4, currentRoomIndex / 3);
+
+    // Dash-enemy probability increases the deeper you go
     int dashChance = 0;
     if      (currentRoomIndex >= 10) dashChance = 55;
     else if (currentRoomIndex >=  6) dashChance = 45;
@@ -165,46 +236,70 @@ void Game::spawnEnemy() {
         objects.push_back(std::make_unique<BulletEnemy>(ex, ey, tier));
 }
 
+// ── Next room ─────────────────────────────────────────────────────────────────
 void Game::nextRoom() {
     currentRoomIndex++;
+
+    // Build or reuse room
     if (currentRoomIndex >= static_cast<int>(rooms.size())) {
         RoomTemplate tmpl = RoomTemplates::getRandom();
         rooms.push_back(std::make_unique<Room>(currentRoomIndex, tmpl));
         rooms.back()->loadAssets();
     }
 
+    // Move player to the new room's designated start position
+    sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
+
     std::vector<std::unique_ptr<GameObject>> newObjects;
     auto it = std::find_if(objects.begin(), objects.end(),
-                           [](const auto& o){ return dynamic_cast<Player*>(o.get()); });
+                           [](const auto& o){ return dynamic_cast<Player*>(o.get()) != nullptr; });
     if (it != objects.end()) {
-        static_cast<Player*>(it->get())->setPosition({20.f, 100.f});
+        static_cast<Player*>(it->get())->setPosition(startPos);
         newObjects.push_back(std::move(*it));
     } else {
-        newObjects.push_back(std::make_unique<Player>(20.f, 100.f));
+        newObjects.push_back(std::make_unique<Player>(startPos.x, startPos.y));
     }
     objects = std::move(newObjects);
-    enemiesRemainingToSpawn = std::min(3 + currentRoomIndex / 2, 10);
+
+    // ── Progressive enemy count ───────────────────────────────────────────────
+    // Room 1: 2 enemies total, grows by ~1 every 2 rooms, capped at 12
+    int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
+    enemiesRemainingToSpawn = totalEnemies;
 
     vendingUI.close();
     nearVending = false;
 }
 
+// ── Reset run ─────────────────────────────────────────────────────────────────
 void Game::resetRun() {
     Player::resetRunStats();
+
     rooms.clear();
-    rooms.push_back(std::make_unique<Room>(0, 0, sf::Color(20, 25, 40)));
+    auto starterTmpl = RoomTemplates::getAll()[0];
+    rooms.push_back(std::make_unique<Room>(0, starterTmpl));
     rooms[0]->loadAssets();
+    rooms[0]->setCleared(true);   // starter room is pre-cleared
+
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
     totalCoins              = 0;
     heldItem                = "";
     skillTree.close();
     vendingUI.close();
-    nearVending = false;
+    nearVending  = false;
+
+    // Clear all latched key states so a held key at death doesn't fire
+    // immediately in the new run (e.g. E triggering nextRoom on frame 1).
+    wasEPressed   = false;
+    wasFPressed   = false;
+    wasMPressed   = false;
+
     objects.clear();
-    objects.push_back(std::make_unique<Player>(100.f, 100.f));
+    objects.push_back(std::make_unique<Player>(
+        starterTmpl.playerStart.x, starterTmpl.playerStart.y));
 }
 
+// ── Save / Load ───────────────────────────────────────────────────────────────
 void Game::saveGame() {
     Player* playerPtr = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
     if (!playerPtr) return;
@@ -219,9 +314,8 @@ void Game::saveGame() {
     sd.secondChanceUsed = playerPtr->isSecondChanceUsed();
     sd.totemCharges     = playerPtr->getTotemCharges();
 
-    for (int i = 0; i < SKILL_COUNT; ++i) {
+    for (int i = 0; i < SKILL_COUNT; ++i)
         sd.upgrades[i] = playerPtr->getUpgradeLevel(i);
-    }
 
     sd.roomIndex   = currentRoomIndex;
     sd.coins       = totalCoins;
@@ -232,9 +326,29 @@ void Game::saveGame() {
     SaveSystem::save(sd);
 }
 
+void Game::loadGame() {
+    SaveData sd = SaveSystem::load();
+    if (!sd.exists) return;
+
+    resetRun();
+    if (!objects.empty()) {
+        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+            p->applyLoadedSave(sd);
+    }
+    isFullscreen = sd.fullscreen;
+    applyWindowMode();
+    heldItem    = sd.heldItem;
+    totalCoins  = sd.coins;
+
+    // Replay room transitions silently to restore room index
+    currentRoomIndex = 0;
+    for (int i = 0; i < sd.roomIndex; ++i) nextRoom();
+}
+
+// ── Pause menu ────────────────────────────────────────────────────────────────
 void Game::drawPauseMenu() {
     sf::RectangleShape overlay(sf::Vector2f(VIEW_W, VIEW_H));
-    overlay.setFillColor(sf::Color(0, 0, 0, 180)); 
+    overlay.setFillColor(sf::Color(0, 0, 0, 180));
     window.draw(overlay);
 
     sf::Text pauseTitle("PAUSE", font, 24);
@@ -243,13 +357,10 @@ void Game::drawPauseMenu() {
     window.draw(pauseTitle);
 
     std::vector<std::string> pauseItems = { "SAVE GAME", "OPTIONS", "QUIT" };
-    
     for (int i = 0; i < 3; ++i) {
         sf::Text itemText(pauseItems[i], font, 16);
-        
         if (i == pauseSel) {
-            itemText.setFillColor(sf::Color(255, 210, 50)); 
-            
+            itemText.setFillColor(sf::Color(255, 210, 50));
             sf::Text marker(">", font, 16);
             marker.setFillColor(sf::Color(255, 210, 50));
             marker.setPosition(VIEW_W / 2.f - 60.f, 85.f + i * 25.f);
@@ -257,7 +368,6 @@ void Game::drawPauseMenu() {
         } else {
             itemText.setFillColor(sf::Color(140, 130, 160));
         }
-        
         itemText.setPosition(VIEW_W / 2.f - 40.f, 85.f + i * 25.f);
         window.draw(itemText);
     }
@@ -271,29 +381,26 @@ void Game::run() {
             if (event.type == sf::Event::Closed)  window.close();
             if (event.type == sf::Event::Resized) applyLetterboxView();
 
-            // ── Menu state: feed all events to MainMenu ───────────────────────
+            // ── Menu state ────────────────────────────────────────────────────
             if (appState == AppState::MENU) {
+                if (event.type == sf::Event::KeyPressed &&
+                    event.key.code == sf::Keyboard::F11 && !wasF11Pressed) {
+                    wasF11Pressed = true;
+                    isFullscreen = !isFullscreen;
+                    applyWindowMode();
+                    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                }
+                if (event.type == sf::Event::KeyReleased &&
+                    event.key.code == sf::Keyboard::F11)
+                    wasF11Pressed = false;
+
                 MenuAction action = mainMenu->handleEvent(event);
                 if (action == MenuAction::NEW_GAME) {
                     resetRun();
                     appState = AppState::PLAYING;
                 }
                 else if (action == MenuAction::LOAD_GAME) {
-                    SaveData sd = SaveSystem::load();
-                    if (sd.exists) {
-                        resetRun();
-                        if (!objects.empty()) {
-                            if (auto* p = dynamic_cast<Player*>(objects[0].get())) {
-                                p->applyLoadedSave(sd);
-                            }
-                        }
-                        isFullscreen = sd.fullscreen;
-                        applyWindowMode();
-                        heldItem    = sd.heldItem;
-                        totalCoins  = sd.coins;
-                        currentRoomIndex = 0;
-                        for (int i = 0; i < sd.roomIndex; ++i) nextRoom();
-                    }
+                    loadGame();
                     appState = AppState::PLAYING;
                 }
                 else if (action == MenuAction::QUIT) {
@@ -305,7 +412,7 @@ void Game::run() {
                     applyWindowMode();
                     mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
                 }
-                continue; 
+                continue;
             }
 
             // ── Gameplay state input ──────────────────────────────────────────
@@ -313,26 +420,18 @@ void Game::run() {
                 if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Tab) {
                     isPaused = !isPaused;
                     pauseSel = 0;
-                    continue; 
+                    continue;
                 }
 
                 if (isPaused) {
                     if (event.type == sf::Event::KeyPressed) {
-                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W) {
+                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
                             pauseSel = (pauseSel - 1 + 3) % 3;
-                        }
-                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S) {
+                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             pauseSel = (pauseSel + 1) % 3;
-                        }
-                        if (event.key.code == sf::Keyboard::Enter || event.key.code == sf::Keyboard::Space) {
-                            if (pauseSel == 0) {
-                                saveGame();
-                                isPaused = false;
-                            } 
-                            else if (pauseSel == 1) {
-                                isFullscreen = !isFullscreen;
-                                applyWindowMode();
-                            } 
+                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space) {
+                            if      (pauseSel == 0) { saveGame(); isPaused = false; }
+                            else if (pauseSel == 1) { isFullscreen = !isFullscreen; applyWindowMode(); }
                             else if (pauseSel == 2) {
                                 mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
                                 appState = AppState::MENU;
@@ -340,7 +439,7 @@ void Game::run() {
                             }
                         }
                     }
-                    continue; 
+                    continue;
                 }
 
                 if (event.type == sf::Event::KeyPressed) {
@@ -350,36 +449,32 @@ void Game::run() {
                         wasF11Pressed = true;
                     }
 
+                    // Vending UI input
                     if (vendingUI.isOpen()) {
-                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                        if (event.key.code == sf::Keyboard::Up   || event.key.code == sf::Keyboard::W)
                             vendingUI.moveSelection(-1);
-
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             vendingUI.moveSelection(+1);
-
                         if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space) {
                             std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
                             if (!bought.empty()) heldItem = bought;
                         }
-
                         if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::E)
                             vendingUI.close();
-
                         continue;
                     }
 
+                    // Skill tree input
                     if (skillTree.isOpen()) {
-                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                        if (event.key.code == sf::Keyboard::Up   || event.key.code == sf::Keyboard::W)
                             skillTree.moveSelection(-1);
-
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             skillTree.moveSelection(+1);
-
-                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space || event.key.code == sf::Keyboard::E) {
+                        if (event.key.code == sf::Keyboard::Return || event.key.code == sf::Keyboard::Space ||
+                            event.key.code == sf::Keyboard::E) {
                             Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
                             skillTree.buySelected(p);
                         }
-
                         if (event.key.code == sf::Keyboard::Escape || event.key.code == sf::Keyboard::M)
                             skillTree.close();
                     }
@@ -430,31 +525,17 @@ void Game::update(float dt) {
         sf::FloatRect pb = playerPtr->getBounds();
         sf::Vector2f  pc = {pb.left + pb.width / 2.f, pb.top + pb.height / 2.f};
 
-        if (heldItem == "Monster Energy") {
-            playerPtr->applyMonsterBuff();
-            heldItem = "";
-        }
-        else if (heldItem == "Pizza") {
-            playerPtr->healFull();
-            heldItem = "";
-        }
-        else if (heldItem == "Duo") {
-            objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y));
-            heldItem = "";
-        }
-        else if (heldItem == "Annoying Dog") {
-            objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y));
-            heldItem = "";
-        }
-        else if (heldItem == "Totem") {
-            playerPtr->addTotemCharge();
-            heldItem = "";
-        }
+        if (heldItem == "Monster Energy") { playerPtr->applyMonsterBuff(); heldItem = ""; }
+        else if (heldItem == "Pizza")     { playerPtr->healFull();          heldItem = ""; }
+        else if (heldItem == "Duo")       { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; }
+        else if (heldItem == "Annoying Dog") { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; }
+        else if (heldItem == "Totem")     { playerPtr->addTotemCharge();    heldItem = ""; }
     }
     wasFPressed = fNow;
 
     std::vector<std::unique_ptr<GameObject>> spawnQueue;
 
+    // ── Object updates ────────────────────────────────────────────────────────
     for (auto& obj : objects) {
         if (!obj->isActive()) continue;
         obj->update(dt, window);
@@ -467,12 +548,14 @@ void Game::update(float dt) {
             dog->tryExplode(objects, spawnQueue);
     }
 
+    // ── Keep player inside play area ──────────────────────────────────────────
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         if (pb.top + pb.height > UI_BAR_Y)
             playerPtr->setPosition({getRectCenter(pb).x, UI_BAR_Y - pb.height / 2.f});
     }
 
+    // ── Player vs prop collision ───────────────────────────────────────────────
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
@@ -492,6 +575,7 @@ void Game::update(float dt) {
         }
     }
 
+    // ── Enemy vs prop collision ───────────────────────────────────────────────
     const auto& propColliders = rooms[currentRoomIndex]->getPropColliders();
     for (auto& obj : objects) {
         auto* enemy = dynamic_cast<Enemy*>(obj.get());
@@ -506,11 +590,9 @@ void Game::update(float dt) {
             float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
             float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
             sf::Vector2f centre = getRectCenter(eb);
-            sf::Vector2f newPos;
-            if (std::abs(minH) < std::abs(minV))
-                newPos = {centre.x + minH, centre.y};
-            else
-                newPos = {centre.x, centre.y + minV};
+            sf::Vector2f newPos = (std::abs(minH) < std::abs(minV))
+                ? sf::Vector2f{centre.x + minH, centre.y}
+                : sf::Vector2f{centre.x, centre.y + minV};
             enemy->nudgePosition(newPos - centre);
             eb = enemy->getBounds();
         }
@@ -519,12 +601,13 @@ void Game::update(float dt) {
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
     spawnQueue.clear();
 
-    // ── Collisions ────────────────────────────────────────────────────────────
+    // ── Collision detection ───────────────────────────────────────────────────
     const int collisionCount = static_cast<int>(objects.size());
     for (int idx = 0; idx < collisionCount; ++idx) {
         auto& objA = objects[idx];
         if (!objA->isActive()) continue;
 
+        // Player sword vs bullets (deflect) and enemies (hit)
         if (playerPtr && playerPtr->isAttackingNow()) {
             if (auto* bullet = dynamic_cast<Bullet*>(objA.get())) {
                 if (bullet->isFromEnemy() &&
@@ -551,8 +634,17 @@ void Game::update(float dt) {
             if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
                 if (playerPtr->getSwordBounds().intersects(enemy->getBounds())) {
                     bool wasAlive = enemy->isActive();
-                    int dmg = playerPtr->isMonsterOneHit() ? 9999 : playerPtr->getComboHitDamage();
+                    bool alreadyHit = playerPtr->hasHitThisSwing();
+                    int dmg = playerPtr->isMonsterOneHit()
+                        ? 9999
+                        : playerPtr->registerHit();
                     enemy->takeDamage(dmg);
+                    // Spawn floating number only on the first frame of contact
+                    if (!alreadyHit) {
+                        sf::Vector2f epos = getRectCenter(enemy->getBounds());
+                        bool bigHit = (!playerPtr->isMonsterOneHit() && playerPtr->getComboCount() == 3);
+                        spawnDamageNumber(epos, std::min(dmg, 999), bigHit);
+                    }
                     if (wasAlive && !enemy->isActive()) {
                         int xpReward = dynamic_cast<DashEnemy*>(enemy) ? 3 : 2;
                         playerPtr->addXP(xpReward);
@@ -578,20 +670,18 @@ void Game::update(float dt) {
                         };
                         for (int ci = 0; ci < coinDrop; ++ci) {
                             sf::Vector2f raw(deathPos.x + scatter(rng), deathPos.y + scatter(rng));
-                            sf::Vector2f safe = findOpenCoinPos(raw);
-                            spawnQueue.push_back(std::make_unique<Coin>(safe.x, safe.y));
+                            spawnQueue.push_back(std::make_unique<Coin>(
+                                findOpenCoinPos(raw).x, findOpenCoinPos(raw).y));
                         }
                     }
                 }
             }
         }
 
+        // Bullet vs props / player / enemies
         if (auto* bullet = dynamic_cast<Bullet*>(objA.get())) {
             for (const sf::FloatRect& col : propColliders) {
-                if (bullet->getBounds().intersects(col)) {
-                    bullet->destroy();
-                    break;
-                }
+                if (bullet->getBounds().intersects(col)) { bullet->destroy(); break; }
             }
             if (!bullet->isActive()) continue;
 
@@ -611,7 +701,6 @@ void Game::update(float dt) {
                             e->takeDamage(dmg);
                             if (wasAlive && !e->isActive()) {
                                 playerPtr->addXP(dynamic_cast<DashEnemy*>(e) ? 3 : 2);
-
                                 sf::Vector2f deathPos = getRectCenter(e->getBounds());
                                 int coinDrop = dynamic_cast<DashEnemy*>(e) ? 2 : 1;
                                 static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
@@ -645,7 +734,7 @@ void Game::update(float dt) {
             }
         }
 
-       // ── Player & Enemy Contact (Damage & Push Apart) ──────────────────────
+        // Player vs enemy contact — push apart; contact damage is ticked separately below
         if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
             if (playerPtr && playerPtr->isActive()) {
                 sf::FloatRect playerBounds = playerPtr->getBounds();
@@ -655,9 +744,8 @@ void Game::update(float dt) {
                     bool skipPush = false;
                     if (auto* de = dynamic_cast<DashEnemy*>(enemy)) {
                         if (de->isDashingNow()) {
-                            if (!playerPtr->isDashingNow()) {
-                                playerPtr->takeDamage(1);
-                            }
+                            if (!playerPtr->isDashingNow())
+                                playerPtr->takeDamage(1);  // dash still instant-hits
                             skipPush = true;
                         }
                     }
@@ -671,48 +759,27 @@ void Game::update(float dt) {
                         float minX = std::min(overlapLeft, overlapRight);
                         float minY = std::min(overlapTop,  overlapBottom);
 
-                        sf::Vector2f pushEnemy(0.f, 0.f);
-                        sf::Vector2f pushPlayer(0.f, 0.f);
-
+                        sf::Vector2f pushEnemy(0.f, 0.f), pushPlayer(0.f, 0.f);
                         if (minX < minY) {
                             float half = minX * 0.5f;
-                            if (overlapLeft < overlapRight) {
-                                pushPlayer.x = -half;
-                                pushEnemy.x  =  half;
-                            } else {
-                                pushPlayer.x =  half;
-                                pushEnemy.x  = -half;
-                            }
+                            if (overlapLeft < overlapRight) { pushPlayer.x = -half; pushEnemy.x =  half; }
+                            else                            { pushPlayer.x =  half; pushEnemy.x = -half; }
                         } else {
                             float half = minY * 0.5f;
-                            if (overlapTop < overlapBottom) {
-                                pushPlayer.y = -half;
-                                pushEnemy.y  =  half;
-                            } else {
-                                pushPlayer.y =  half;
-                                pushEnemy.y  = -half;
-                            }
+                            if (overlapTop < overlapBottom) { pushPlayer.y = -half; pushEnemy.y =  half; }
+                            else                            { pushPlayer.y =  half; pushEnemy.y = -half; }
                         }
 
                         playerPtr->setPosition(sf::Vector2f(
                             playerBounds.left + playerBounds.width  / 2.f + pushPlayer.x,
-                            playerBounds.top  + playerBounds.height / 2.f + pushPlayer.y
-                        ));
-
+                            playerBounds.top  + playerBounds.height / 2.f + pushPlayer.y));
                         enemy->nudgePosition(pushEnemy);
-
-                        if (!playerPtr->isDashingNow() && 
-                            !dynamic_cast<DashEnemy*>(enemy) && 
-                            !dynamic_cast<BulletEnemy*>(enemy)) 
-                        {
-                            playerPtr->takeDamage(1);
-                        }
                     }
                 }
             }
         }
-        // ──────────────────────────────────────────────────────────────────────
 
+        // Coin pickup
         if (auto* coin = dynamic_cast<Coin*>(objA.get())) {
             if (playerPtr && playerPtr->getBounds().intersects(coin->getBounds())) {
                 coin->destroy();
@@ -729,10 +796,14 @@ void Game::update(float dt) {
             [](const std::unique_ptr<GameObject>& o){ return !o->isActive(); }),
         objects.end());
 
+    // ── Wave spawning ─────────────────────────────────────────────────────────
+    // Count living enemies; when the wave is wiped, spawn the next wave.
+    // Starter room (index 0) is always pre-cleared, so this never fires there.
     int alive = 0;
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
 
     if (alive == 0 && enemiesRemainingToSpawn > 0) {
+        // Wave size: 1-3 early, grows to 1-5 later
         int minW = 1;
         int maxW = std::min(2 + currentRoomIndex / 3, 5);
         std::uniform_int_distribution<int> wsd(minW, maxW);
@@ -743,11 +814,11 @@ void Game::update(float dt) {
 
     bool cleared = (alive == 0 && enemiesRemainingToSpawn == 0);
     rooms[currentRoomIndex]->setCleared(cleared);
-    doorShape.setFillColor(cleared ? sf::Color(230, 180, 40) : sf::Color(70, 70, 70));
+
+    updateDamageNumbers(dt);
 
     // ── Vending proximity ─────────────────────────────────────────────────────
     nearVending = false;
-    sf::Vector2f vendingPromptPos{};
     if (playerPtr && playerPtr->isActive()) {
         sf::Vector2f pc = getRectCenter(playerPtr->getBounds());
         sf::FloatRect vb = getClosestVendingBounds(pc);
@@ -756,19 +827,18 @@ void Game::update(float dt) {
             float dx = pc.x - vc.x, dy = pc.y - vc.y;
             if (std::sqrt(dx*dx + dy*dy) < VENDING_INTERACT_DIST + vb.width / 2.f) {
                 nearVending = true;
-                vendingPromptPos = {vc.x - 10.f, vb.top - 16.f};
 
                 bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
-                if (eNow && !wasEPressed && !skillTree.isOpen()) {
+                if (eNow && !wasEPressed && !skillTree.isOpen())
                     vendingUI.openShop();
-                }
                 wasEPressed = eNow;
             }
         }
     }
 
-    // ── Door interaction (only when not near vending) ─────────────────────────
-    if (!nearVending && cleared && playerPtr) {
+    // ── Door interaction ──────────────────────────────────────────────────────
+    if (!nearVending && rooms[currentRoomIndex]->getIsCleared() && playerPtr) {
+        doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
         if (playerPtr->getBounds().intersects(doorShape.getGlobalBounds())) {
             bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
             if (eNow && !wasEPressed) nextRoom();
@@ -786,12 +856,32 @@ void Game::render() {
 
     rooms[currentRoomIndex]->draw(window);
 
-    doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
-    doorShape.setRotation(rooms[currentRoomIndex]->getDoorRotation());
-    window.draw(doorShape);
+    {
+        sf::Vector2f dp = rooms[currentRoomIndex]->getDoorPosition();
+        bool cleared = rooms[currentRoomIndex]->getIsCleared();
+
+        doorShape.setPosition(dp);
+        doorShape.setRotation(0.f);
+
+        // Frame 0 = top (locked), frame 1 = bottom (cleared/open)
+        int frameY = cleared ? 40 : 0;
+        doorSprite.setTextureRect(sf::IntRect(0, frameY, 50, 40));
+        doorSprite.setPosition(dp);
+        // Template rotation 0 = left or right border → rotate sprite based on side
+        // Template rotation 90 = top/bottom border → no rotation
+        float tmplRot = rooms[currentRoomIndex]->getDoorRotation();
+        float spriteRot = 0.f;
+        if (tmplRot == 0.f) {
+            spriteRot = (dp.x > 200.f) ? 90.f : 270.f;  // right border = 90, left = 270
+        }
+        doorSprite.setRotation(spriteRot);
+        window.draw(doorSprite);
+    }
 
     for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)
         if (objects[i]->isActive()) objects[i]->draw(window);
+
+    drawDamageNumbers();
 
     Player* playerPtr = objects.empty()
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
@@ -799,16 +889,18 @@ void Game::render() {
     hud.renderSkillsHint(window, playerPtr);
     hud.render(window, playerPtr, rooms[currentRoomIndex]->getId(), totalCoins);
 
+    // Door [E] prompt
     if (playerPtr && rooms[currentRoomIndex]->getIsCleared() && !nearVending) {
         sf::Vector2f pp = getRectCenter(playerPtr->getBounds());
-        sf::Vector2f dp = doorShape.getPosition();
+        sf::Vector2f dp = rooms[currentRoomIndex]->getDoorPosition();
         float dx = pp.x - dp.x, dy = pp.y - dp.y;
-        if (std::sqrt(dx*dx + dy*dy) < 45.f) {
-            interactText.setPosition(dp.x - 15.f, dp.y - 25.f);
+        if (std::sqrt(dx*dx + dy*dy) < 70.f) {
+            interactText.setPosition(dp.x - 10.f, dp.y - 24.f);
             window.draw(interactText);
         }
     }
 
+    // Vending [E] prompt
     if (nearVending && !vendingUI.isOpen() && playerPtr) {
         sf::Vector2f pc = getRectCenter(playerPtr->getBounds());
         sf::FloatRect vb = getClosestVendingBounds(pc);
@@ -819,17 +911,23 @@ void Game::render() {
         }
     }
 
+    // Held item label
     if (!heldItem.empty()) {
         sf::Text heldLabel("[F] " + heldItem, font, 16);
         heldLabel.setScale(0.75f, 0.75f);
         heldLabel.setFillColor(sf::Color(180, 230, 180));
         float hw = heldLabel.getGlobalBounds().width;
         float hx = 328.f - hw - 4.f;
-        if (hx < 160.f) { heldLabel.setScale(0.6f, 0.6f); hw = heldLabel.getGlobalBounds().width; hx = 328.f - hw - 4.f; }
+        if (hx < 160.f) {
+            heldLabel.setScale(0.6f, 0.6f);
+            hw = heldLabel.getGlobalBounds().width;
+            hx = 328.f - hw - 4.f;
+        }
         heldLabel.setPosition(std::max(2.f, hx), 195.f + 2.f);
         window.draw(heldLabel);
     }
 
+    // Monster buff label
     if (playerPtr && playerPtr->hasMonsterBuff()) {
         sf::Text buffLabel("MONSTER!", font, 16);
         buffLabel.setScale(0.75f, 0.75f);
@@ -839,15 +937,9 @@ void Game::render() {
         window.draw(buffLabel);
     }
 
-    if (skillTree.isOpen())
-        skillTree.render(window, playerPtr);
-
-    if (vendingUI.isOpen())
-        vendingUI.render(window, totalCoins, heldItem);
-
-    if (isPaused) {
-        drawPauseMenu();
-    }
+    if (skillTree.isOpen())  skillTree.render(window, playerPtr);
+    if (vendingUI.isOpen())  vendingUI.render(window, totalCoins, heldItem);
+    if (isPaused)            drawPauseMenu();
 
     window.display();
 }

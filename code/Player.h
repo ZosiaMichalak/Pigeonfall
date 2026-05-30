@@ -88,6 +88,11 @@ private:
     int   slashFrameWidth;
     int   slashFrameHeight;
 
+    // ── Combo tracking ────────────────────────────────────────────────────────
+    int   comboCount;            // 0..3 — how many hits in current combo
+    float comboWindowTimer;      // time left before combo resets
+    bool  hitConnectedThisSwing; // true once per attack swing when an enemy is hit
+
     // Tekstury i sprite'y SFML
     sf::Texture textureIdle;
     sf::Texture textureWalk;
@@ -135,6 +140,10 @@ public:
     // Gettery i metody pomocnicze
     sf::FloatRect getSwordBounds() const { return swordHitbox.getGlobalBounds(); }
     int           getComboHitDamage() const { return attackDamage; }
+    // Called when sword actually hits an enemy; returns damage for this hit
+    int           registerHit();
+    int           getComboCount() const { return comboCount; }
+    bool          hasHitThisSwing() const { return hitConnectedThisSwing; }
 
     float getAttackCooldownTimer() const { return attackCooldownTimer; }
     float getAttackCooldownMax()   const { return attackCooldownMax; }
