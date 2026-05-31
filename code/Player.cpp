@@ -1,6 +1,7 @@
 #include "Player.h"
 #include "SaveSystem.h"
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
 #include <iostream>
 
@@ -14,6 +15,7 @@ int                          Player::persistentXpToNext         = 10;
 std::array<int, SKILL_COUNT> Player::persistentUpgrades         = {0,0,0,0,0,0};
 bool                         Player::persistentSecondChanceUsed = false;
 int                          Player::persistentTotemCharges     = 0;
+bool                         Player::persistentTotemBoughtThisRun = false;
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 Player::Player(float x, float y) : GameObject(x, y) {
@@ -102,45 +104,78 @@ Player::Player(float x, float y) : GameObject(x, y) {
 // ── Animation state switch ────────────────────────────────────────────────────
 void Player::setAnim(AnimState anim) {
     if (currentAnim == anim) return;
+    // During monster buff: block switching away from WALK (except DASH)
+    if (monsterWalkLocked && currentAnim == AnimState::WALK &&
+        anim != AnimState::DASH && anim != AnimState::WALK)
+        return;
+
     currentAnim    = anim;
     currentColumn  = 0;
     animationTimer = 0.f;
 
     switch (anim) {
     case AnimState::IDLE:
-        if (!hasIdleTexture) return;
-        sprite.setTexture(textureIdle);
-        frameWidth = 51; frameHeight = 32;
-        maxColumns = 3;  
-        sheetCols  = 1; // 1 kolumna (pionowy pasek)
-        frameDuration = 0.18f;
+        // Monster buff: stay on monster mode even when idle
+        if (monsterWalkLocked && hasMonsterModeTexture) {
+            currentAnim = AnimState::IDLE;
+            return;
+        }
+        if (hasHeldIdle) {
+            sprite.setTexture(textureHeldIdle);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 3; sheetCols = 1;
+            frameDuration = 0.18f;
+        } else {
+            if (!hasIdleTexture) return;
+            sprite.setTexture(textureIdle);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 3; sheetCols = 1;
+            frameDuration = 0.18f;
+        }
         break;
 
     case AnimState::WALK:
-        if (!hasWalkTexture) { setAnim(AnimState::IDLE); return; }
-        sprite.setTexture(textureWalk);
-        frameWidth = 51; frameHeight = 32;
-        maxColumns = 6;  
-        sheetCols  = 2; // 2 kolumny
-        frameDuration = 0.1f;
+        if (monsterWalkLocked && hasMonsterModeTexture) {
+            sprite.setTexture(textureMonsterMode);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 6; sheetCols = 2;
+            frameDuration = 0.10f;
+        } else if (hasHeldWalk) {
+            sprite.setTexture(textureHeldWalk);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 6; sheetCols = 2;
+            frameDuration = 0.1f;
+        } else {
+            if (!hasWalkTexture) { setAnim(AnimState::IDLE); return; }
+            sprite.setTexture(textureWalk);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 6; sheetCols = 2;
+            frameDuration = 0.1f;
+        }
         break;
 
     case AnimState::DASH:
         if (!hasDashTexture) return;
         sprite.setTexture(textureDash);
         frameWidth = 51; frameHeight = 32;
-        maxColumns = 8;  
-        sheetCols  = 2; // 2 kolumny
+        maxColumns = 8; sheetCols = 2;
         frameDuration = dashDuration / 8.f;
         break;
 
     case AnimState::ATTACK:
-        if (!hasAttackTexture) return;
-        sprite.setTexture(textureAttack);
-        frameWidth = 51; frameHeight = 32;
-        maxColumns = 5;  
-        sheetCols  = 2; // 2 kolumny
-        frameDuration = attackDuration / 5.f;
+        // Monster buff: keep monster mode texture, never switch away
+        if (monsterWalkLocked && hasMonsterModeTexture) {
+            // Stay on monster mode — don't touch texture or frame params
+            // Just update currentAnim so the caller knows we're attacking
+            currentAnim = AnimState::ATTACK;
+            return; // skip setOrigin below — already set correctly
+        } else {
+            if (!hasAttackTexture) return;
+            sprite.setTexture(textureAttack);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = 5; sheetCols = 2;
+            frameDuration = attackDuration / 5.f;
+        }
         break;
     }
 
@@ -204,14 +239,85 @@ void Player::healFull() {
 }
 
 void Player::applyMonsterBuff() {
+    monsterVariant    = 1 + std::rand() % 5;
+    monsterWalkLocked = true;
+    loadHeldTextures("Monster Energy");
     monsterBuffTimer  = 10.f;
     monsterOneHitKill = true;
-    speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f + 200.f; // ultra fast
-    hp = std::min(hp + 1, maxHp); // heal 1 HP
+    speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f + 200.f;
+    hp = std::min(hp + 1, maxHp);
+
+    // Load the dedicated monster-mode animation — overrides walk/attack
+    if (textureMonsterMode.loadFromFile("assets/player_monsterMode.png")) {
+        textureMonsterMode.setSmooth(false);
+        hasMonsterModeTexture = true;
+    }
+
+    // Force switch to monster mode anim immediately
+    if (hasMonsterModeTexture) {
+        sprite.setTexture(textureMonsterMode);
+        frameWidth    = 51; frameHeight   = 32;
+        maxColumns    = 6;  sheetCols     = 2;
+        frameDuration = 0.10f;
+        currentColumn = 0;  animationTimer = 0.f;
+        currentAnim   = AnimState::WALK; // treated as walk internally
+        sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
+    }
+}
+
+void Player::loadHeldTextures(const std::string& item) {
+    if (item == loadedHeldItem && !item.empty()) return; // already loaded
+    loadedHeldItem = item;
+    hasHeldIdle = false;
+    hasHeldWalk = false;
+    if (item.empty()) return;
+
+    std::string idleFile, walkFile;
+
+    if (item == "Monster Energy") {
+        std::string v = std::to_string(monsterVariant);
+        idleFile = "assets/player_idle_monster" + v + ".png";
+        walkFile = "assets/player_walk_monster" + v + ".png";
+    } else if (item == "Annoying Dog") {
+        idleFile = "assets/player_idle_annoyingDog.png";
+        walkFile = "assets/player_walk_annoyingDog.png";
+    } else if (item == "Duo") {
+        idleFile = "assets/player_idle_duo.png";
+        walkFile = "assets/player_walk_duo.png";
+    } else if (item == "Totem") {
+        idleFile = "assets/player_idle_totem.png";
+        walkFile = "assets/player_walk_totem.png";
+    } else if (item == "Pizza") {
+        idleFile = "assets/player_idle_pizza.png";
+        walkFile = "assets/player_walk_pizza.png";
+    } else {
+        return;
+    }
+
+    hasHeldIdle = textureHeldIdle.loadFromFile(idleFile);
+    if (hasHeldIdle) textureHeldIdle.setSmooth(false);
+    hasHeldWalk = textureHeldWalk.loadFromFile(walkFile);
+    if (hasHeldWalk) textureHeldWalk.setSmooth(false);
+}
+
+void Player::setHeldItem(const std::string& item) {
+    // Monster buff variant is already chosen in applyMonsterBuff
+    if (item != "Monster Energy") {
+        monsterVariant    = 0;
+        monsterWalkLocked = false;
+    }
+    loadHeldTextures(item);
+    // Force texture refresh on next setAnim call
+    if (currentAnim == AnimState::IDLE || currentAnim == AnimState::WALK) {
+        AnimState prev = currentAnim;
+        currentAnim = AnimState::DASH; // force re-entry
+        setAnim(prev);
+    }
 }
 
 void Player::addTotemCharge() {
     persistentTotemCharges++;
+    persistentTotemBoughtThisRun = true;
 }
 
 bool Player::consumeSecondChance() {
@@ -237,8 +343,9 @@ bool Player::consumeSecondChance() {
 }
 
 void Player::resetRunStats() {
-    persistentSecondChanceUsed = false;
-    persistentTotemCharges     = 0;
+    persistentSecondChanceUsed   = false;
+    persistentTotemCharges       = 0;
+    persistentTotemBoughtThisRun = false;
     // XP, level, skillpoints and upgrades intentionally persist across deaths
 }
 
@@ -342,7 +449,8 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
         if (attackTimer <= 0.f) {
             isAttacking = false;
-            setAnim(AnimState::IDLE);
+            if (!hasMonsterModeTexture)
+                setAnim(AnimState::IDLE);
         }
     }
 }
@@ -352,9 +460,17 @@ void Player::update(float dt, sf::RenderWindow& window) {
     if (monsterBuffTimer > 0.f) {
         monsterBuffTimer -= dt;
         if (monsterBuffTimer <= 0.f) {
-            // Buff expired – restore normal speed
             speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
             monsterOneHitKill = false;
+            monsterWalkLocked = false;
+            monsterVariant    = 0;
+            loadedHeldItem    = "";   // force texture reload on next setHeldItem
+            hasHeldIdle = false;
+            hasHeldWalk = false;
+            hasMonsterModeTexture = false;
+            // Snap back to base idle texture
+            currentAnim = AnimState::DASH; // force re-entry
+            setAnim(AnimState::IDLE);
         }
     }
 
@@ -377,7 +493,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
         if (dashTimer <= 0.f) {
             isDashing = false;
-            if (currentAnim == AnimState::DASH)
+            if (currentAnim == AnimState::DASH && !hasMonsterModeTexture)
                 setAnim(AnimState::IDLE);
         }
     } else {
@@ -391,17 +507,17 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
         if (moving) {
             float len = std::sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
-            
-            // Zabezpieczenie przed dzieleniem przez zero!
-            if (len > 0.f) {
-                position += (moveDir / len) * speed * dt;
-            }
+            if (len > 0.f) position += (moveDir / len) * speed * dt;
 
-            if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
-                setAnim(AnimState::WALK);
+            if (!hasMonsterModeTexture) {
+                if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
+                    setAnim(AnimState::WALK);
+            }
         } else {
-            if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
-                setAnim(AnimState::IDLE);
+            if (!hasMonsterModeTexture) {
+                if (currentAnim != AnimState::ATTACK && currentAnim != AnimState::DASH)
+                    setAnim(AnimState::IDLE);
+            }
         }
 
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space)) startDash(moveDir);
@@ -414,6 +530,15 @@ void Player::update(float dt, sf::RenderWindow& window) {
     if (position.y > 225.f - 40.f) position.y = 225.f - 40.f;
 
     // ── Advance animation frame ───────────────────────────────────────────────
+    // If monster mode is active, keep its texture locked on the sprite
+    if (hasMonsterModeTexture && sprite.getTexture() != &textureMonsterMode) {
+        sprite.setTexture(textureMonsterMode);
+        frameWidth = 51; frameHeight = 32;
+        maxColumns = 6;  sheetCols  = 2;
+        frameDuration = 0.10f;
+        sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
+    }
+
     animationTimer += dt;
     if (animationTimer >= frameDuration) {
         animationTimer -= frameDuration;

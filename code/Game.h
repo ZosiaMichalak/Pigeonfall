@@ -20,8 +20,9 @@
 #include "Coin.h"
 #include "HelperCompanion.h"
 #include "AnnoyingDog.h"
+#include "PigeonKing.h"
 
-enum class AppState { MENU, PLAYING };
+enum class AppState { MENU, PLAYING, DYING, GAME_OVER };
 
 class Game {
 private:
@@ -70,6 +71,38 @@ private:
     bool isPaused;
     int  pauseSel;
 
+    bool isBossRoom = false;   // true when room 4 boss fight is active
+
+    // ── Death fade & game-over screen ─────────────────────────────────────────
+    float fadeTimer;          // counts up during DYING state
+    static constexpr float FADE_DURATION = 1.2f;
+    int   gameOverSel;        // always 0 for now (only "Reborn")
+    float gameOverTimer;      // drives animations on game-over screen
+    std::unique_ptr<MainMenu> gameOverMenu; // allocated once on GAME_OVER entry
+
+    // ── Spawn effects ─────────────────────────────────────────────────────────
+    struct SpawnEffect {
+        sf::Vector2f pos;
+        float        timer;
+        bool         isDash;
+        int          tier;
+        std::unique_ptr<GameObject> pendingObject; // set for boss-spawned enemies
+        bool         isBossSpawn = false;
+        static constexpr float SPAWN_ANIM_DUR      = 0.4f;
+        static constexpr float BOSS_SPAWN_ANIM_DUR = 0.3f;
+        float duration() const { return isBossSpawn ? BOSS_SPAWN_ANIM_DUR : SPAWN_ANIM_DUR; }
+    };
+    std::vector<SpawnEffect> pendingSpawns;
+
+    // Loaded once; shared across all spawn effects
+    sf::Texture spawnTexBullet;
+    sf::Texture spawnTexDash;
+    bool        spawnTexLoaded = false;
+
+    void loadSpawnTextures();
+    void updateSpawnEffects(float dt);
+    void drawSpawnEffects();
+
     // ── Floating damage numbers ───────────────────────────────────────────────
     struct DamageNumber {
         sf::Text     text;
@@ -93,6 +126,7 @@ private:
     void resetRun();
 
     void drawPauseMenu();
+    void drawGameOver();
     void saveGame();
     void loadGame();
 

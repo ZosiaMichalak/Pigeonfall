@@ -15,11 +15,20 @@ VendingUI::VendingUI(sf::Font& font)
     slotIndices = {0, 1, 2};
 }
 
-void VendingUI::rollItems() {
-    // Pick 3 unique random items from the catalogue (Fisher-Yates on first 3)
+void VendingUI::rollItems(bool totemAlreadyBought) {
+    // Build a pool of catalogue indices, optionally excluding Totem (index 4)
     std::array<int, CATALOGUE_SIZE> pool = {0, 1, 2, 3, 4};
+    int poolSize = CATALOGUE_SIZE;
+
+    if (totemAlreadyBought) {
+        // Swap Totem to the end and shrink the pool
+        pool[4] = 4; // already there, just shrink
+        poolSize = CATALOGUE_SIZE - 1; // exclude last slot (Totem = index 4)
+    }
+
+    // Fisher-Yates on first SHOP_SLOTS entries within poolSize
     for (int i = 0; i < SHOP_SLOTS; ++i) {
-        int j = i + std::rand() % (CATALOGUE_SIZE - i);
+        int j = i + std::rand() % (poolSize - i);
         std::swap(pool[i], pool[j]);
         slotIndices[i] = pool[i];
     }

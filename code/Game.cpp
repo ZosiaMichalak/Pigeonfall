@@ -29,7 +29,8 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 Game::Game()
     : hud(font), skillTree(font), vendingUI(font),
       totalCoins(50), nearVending(false),
-      isPaused(false), pauseSel(0)
+      isPaused(false), pauseSel(0),
+      fadeTimer(0.f), gameOverSel(0), gameOverTimer(0.f)
 {
     isFullscreen  = true;
     wasF11Pressed = false;
@@ -57,6 +58,7 @@ Game::Game()
     Hydrant::loadTexture();
     Flowers::loadTexture();
     Car::loadTextures();
+    loadSpawnTextures();
 
     // ── Main menu ─────────────────────────────────────────────────────────────
     appState = AppState::MENU;
@@ -219,10 +221,8 @@ void Game::spawnEnemy() {
         }
     }
 
-    // Tier scales with room depth (capped at 4)
     int tier = std::min(4, currentRoomIndex / 3);
 
-    // Dash-enemy probability increases the deeper you go
     int dashChance = 0;
     if      (currentRoomIndex >= 10) dashChance = 55;
     else if (currentRoomIndex >=  6) dashChance = 45;
@@ -230,10 +230,68 @@ void Game::spawnEnemy() {
     else if (currentRoomIndex >=  1) dashChance = 20;
 
     std::uniform_int_distribution<int> typeDis(0, 99);
-    if (typeDis(rng) < dashChance)
-        objects.push_back(std::make_unique<DashEnemy>(ex, ey, tier));
-    else
-        objects.push_back(std::make_unique<BulletEnemy>(ex, ey, tier));
+    bool isDash = (typeDis(rng) < dashChance);
+
+    pendingSpawns.push_back({ {ex, ey}, 0.f, isDash, tier });
+}
+
+// ── Spawn effects ─────────────────────────────────────────────────────────────
+void Game::updateSpawnEffects(float dt) {
+    for (auto it = pendingSpawns.begin(); it != pendingSpawns.end(); ) {
+        it->timer += dt;
+        if (it->timer >= it->duration()) {
+            if (it->pendingObject) {
+                // Boss-spawned pre-built enemy — clear spawn immunity then add
+                if (auto* e = dynamic_cast<Enemy*>(it->pendingObject.get()))
+                    e->setSpawning(false);
+                objects.push_back(std::move(it->pendingObject));
+            } else {
+                // Regular trickle spawn — build the enemy now
+                if (it->isDash)
+                    objects.push_back(std::make_unique<DashEnemy>(it->pos.x, it->pos.y, it->tier));
+                else
+                    objects.push_back(std::make_unique<BulletEnemy>(it->pos.x, it->pos.y, it->tier));
+            }
+            it = pendingSpawns.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void Game::loadSpawnTextures() {
+    if (spawnTexLoaded) return;
+    spawnTexBullet.loadFromFile("assets/bulletEnemy_spawn.png");
+    spawnTexBullet.setSmooth(false);
+    spawnTexDash.loadFromFile("assets/dashEnemy_spawn.png");
+    spawnTexDash.setSmooth(false);
+    spawnTexLoaded = true;
+}
+
+void Game::drawSpawnEffects() {
+    static constexpr int   FW         = 51;
+    static constexpr int   FH         = 32;
+    static constexpr int   COLS       = 2;
+    static constexpr int   FRAMES     = 8;
+    static constexpr float ANIM_DUR   = SpawnEffect::SPAWN_ANIM_DUR;
+
+    for (const auto& sp : pendingSpawns) {
+        sf::Texture& tex = sp.isDash ? spawnTexDash : spawnTexBullet;
+        if (tex.getSize().x == 0) continue;
+
+        float t     = sp.timer / sp.duration();      // 0 → 1
+        int   frame = static_cast<int>(t * FRAMES);
+        if (frame >= FRAMES) frame = FRAMES - 1;
+
+        int col = frame % COLS;
+        int row = frame / COLS;
+
+        sf::Sprite s(tex);
+        s.setTextureRect(sf::IntRect(col * FW, row * FH, FW, FH));
+        s.setOrigin(FW / 2.f, FH / 2.f);
+        s.setPosition(sp.pos);
+        window.draw(s);
+    }
 }
 
 // ── Next room ─────────────────────────────────────────────────────────────────
@@ -266,9 +324,33 @@ void Game::nextRoom() {
     int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
     enemiesRemainingToSpawn = totalEnemies;
 
+    // ── Boss room 4 ───────────────────────────────────────────────────────────
+    isBossRoom = (currentRoomIndex == 4);
+    if (isBossRoom) {
+        enemiesRemainingToSpawn = 0;  // no trickle-spawns
+
+        // Replace the randomly-generated room with a clean B1 arena (no props)
+        RoomTemplate bossTemplate;
+        bossTemplate.name        = "Boss Arena";
+        bossTemplate.background  = 0;          // B1.png
+        bossTemplate.props       = {};          // no props — boss ignores collisions anyway
+        bossTemplate.doorPosition = {400.f, 100.f};
+        bossTemplate.doorRotation = 90.f;
+        bossTemplate.playerStart  = {50.f, 110.f};
+        rooms[currentRoomIndex]  = std::make_unique<Room>(currentRoomIndex, bossTemplate);
+        rooms[currentRoomIndex]->loadAssets();
+
+        // Re-place player at boss arena start
+        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+            p->setPosition(bossTemplate.playerStart);
+
+        objects.push_back(std::make_unique<PigeonKing>(200.f, 60.f));
+    }
+
     vendingUI.rollItems();   // re-roll shop stock for the new room
     vendingUI.close();
     nearVending = false;
+    pendingSpawns.clear();
 }
 
 // ── Reset run ─────────────────────────────────────────────────────────────────
@@ -390,6 +472,35 @@ void Game::run() {
             if (event.type == sf::Event::Closed)  window.close();
             if (event.type == sf::Event::Resized) applyLetterboxView();
 
+            // ── Game-over state ───────────────────────────────────────────────
+            if (appState == AppState::GAME_OVER) {
+                if (event.type == sf::Event::KeyPressed) {
+                    if (event.key.code == sf::Keyboard::W ||
+                        event.key.code == sf::Keyboard::Up   ||
+                        event.key.code == sf::Keyboard::S    ||
+                        event.key.code == sf::Keyboard::Down)
+                        gameOverSel = 1 - gameOverSel; // toggle between 0 and 1
+
+                    if (event.key.code == sf::Keyboard::E ||
+                        event.key.code == sf::Keyboard::Return ||
+                        event.key.code == sf::Keyboard::Space) {
+                        if (gameOverSel == 0) {
+                            resetRun();
+                            appState = AppState::PLAYING;
+                        } else {
+                            resetRun();
+                            mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                            appState = AppState::MENU;
+                        }
+                        gameOverMenu.reset();
+                    }
+                }
+                continue;
+            }
+
+            // ── Dying state — eat all input ────────────────────────────────────
+            if (appState == AppState::DYING) continue;
+
             // ── Menu state ────────────────────────────────────────────────────
             if (appState == AppState::MENU) {
                 if (event.type == sf::Event::KeyPressed &&
@@ -467,7 +578,15 @@ void Game::run() {
                             vendingUI.moveSelection(+1);
                         if (event.key.code == sf::Keyboard::E) {
                             std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
-                            if (!bought.empty()) heldItem = bought;
+                            if (!bought.empty()) {
+                                Player* p0 = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+                                if (bought == "Totem" && p0 && p0->hasTotemThisRun()) {
+                                    totalCoins += 100; // refund — already bought this run
+                                } else {
+                                    heldItem = bought;
+                                    if (p0) p0->setHeldItem(heldItem);
+                                }
+                            }
                         }
                         if (event.key.code == sf::Keyboard::Q)
                             vendingUI.close();
@@ -484,8 +603,10 @@ void Game::run() {
                             Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
                             skillTree.buySelected(p);
                         }
-                        if (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Tab)
+                        if (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Tab) {
                             skillTree.close();
+                            wasMPressed = true; // prevent polling from re-opening this frame
+                        }
                     }
                 }
                 if (event.type == sf::Event::KeyReleased) {
@@ -501,6 +622,20 @@ void Game::run() {
             window.clear(sf::Color::Black);
             mainMenu->render(window);
             window.display();
+        } else if (appState == AppState::DYING) {
+            // Advance fade; still render the game world underneath
+            fadeTimer += dt;
+            render();   // draws game world + black overlay with increasing alpha
+            if (fadeTimer >= FADE_DURATION) {
+                appState      = AppState::GAME_OVER;
+                gameOverTimer = 0.f;
+                gameOverSel   = 0;
+                // Create once here — never recreated until next death
+                gameOverMenu  = std::make_unique<MainMenu>(font, false, isFullscreen);
+            }
+        } else if (appState == AppState::GAME_OVER) {
+            gameOverTimer += dt;
+            drawGameOver();
         } else {
             update(dt);
             render();
@@ -517,7 +652,9 @@ void Game::update(float dt) {
 
     if (playerPtr && playerPtr->isDeadNow()) {
         if (!playerPtr->consumeSecondChance()) {
-            resetRun();
+            // Start the death fade instead of resetting immediately
+            appState  = AppState::DYING;
+            fadeTimer = 0.f;
             return;
         }
     }
@@ -525,7 +662,7 @@ void Game::update(float dt) {
     if (vendingUI.isOpen() || skillTree.isOpen()) return;
 
     bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::Tab);
-    if (mNow && !wasMPressed) skillTree.toggle();
+    if (mNow && !wasMPressed && !skillTree.isOpen()) skillTree.toggle();
     wasMPressed = mNow;
 
     // ── Use held item (F key) ─────────────────────────────────────────────────
@@ -534,11 +671,11 @@ void Game::update(float dt) {
         sf::FloatRect pb = playerPtr->getBounds();
         sf::Vector2f  pc = {pb.left + pb.width / 2.f, pb.top + pb.height / 2.f};
 
-        if (heldItem == "Monster Energy") { playerPtr->applyMonsterBuff(); heldItem = ""; }
-        else if (heldItem == "Pizza")     { playerPtr->healFull();          heldItem = ""; }
-        else if (heldItem == "Duo")       { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; }
-        else if (heldItem == "Annoying Dog") { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; }
-        else if (heldItem == "Totem")     { playerPtr->addTotemCharge();    heldItem = ""; }
+        if (heldItem == "Monster Energy") { playerPtr->applyMonsterBuff(); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Pizza")     { playerPtr->healFull();          heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Duo")       { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Annoying Dog") { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Totem")     { playerPtr->addTotemCharge();    heldItem = ""; playerPtr->setHeldItem(""); }
     }
     wasFPressed = fNow;
 
@@ -555,6 +692,31 @@ void Game::update(float dt) {
             helper->tryHitEnemy(objects);
         if (auto* dog = dynamic_cast<AnnoyingDog*>(obj.get()))
             dog->tryExplode(objects, spawnQueue);
+    }
+
+    // ── Boss wave zone damage ─────────────────────────────────────────────────
+    if (isBossRoom && playerPtr && playerPtr->isActive()) {
+        for (auto& obj : objects) {
+            if (auto* pk = dynamic_cast<PigeonKing*>(obj.get())) {
+                sf::FloatRect pb = playerPtr->getBounds();
+                for (auto& z : pk->getWaveZones()) {
+                    if (!z.active || z.done) {
+                        z.dmgTimer = 0.f;  // reset when zone not active
+                        continue;
+                    }
+                    if (z.rect.intersects(pb)) {
+                        z.dmgTimer += dt;
+                        if (z.dmgTimer >= 0.5f) {
+                            playerPtr->takeDamage(1);
+                            z.dmgTimer = 0.f;  // reset so next 0.5s tick gives another hit
+                        }
+                    } else {
+                        z.dmgTimer = 0.f;  // left the zone, reset timer
+                    }
+                }
+                break;
+            }
+        }
     }
 
     // ── Keep player inside play area ──────────────────────────────────────────
@@ -607,7 +769,53 @@ void Game::update(float dt) {
         }
     }
 
-    for (auto& o : spawnQueue) objects.push_back(std::move(o));
+
+    // ── AnnoyingDog vs prop collision ─────────────────────────────────────────
+    for (auto& obj2 : objects) {
+        auto* dog = dynamic_cast<AnnoyingDog*>(obj2.get());
+        if (!dog || !dog->isActive()) continue;
+        sf::FloatRect db = dog->getBounds();
+        for (const sf::FloatRect& col : propColliders) {
+            if (!db.intersects(col)) continue;
+            float overlapL = (db.left + db.width)  - col.left;
+            float overlapR = (col.left + col.width) - db.left;
+            float overlapT = (db.top  + db.height)  - col.top;
+            float overlapB = (col.top + col.height)  - db.top;
+            float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
+            float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
+            sf::Vector2f centre2 = getRectCenter(db);
+            sf::Vector2f newPos2 = (std::abs(minH) < std::abs(minV))
+                ? sf::Vector2f{centre2.x + minH, centre2.y}
+                : sf::Vector2f{centre2.x, centre2.y + minV};
+            dog->nudgePosition(newPos2 - centre2);
+            db = dog->getBounds();
+        }
+    }
+    // In boss room: route enemy spawns through pendingSpawns (0.3s anim, capped at 7)
+    for (auto& o : spawnQueue) {
+        Enemy* asEnemy = dynamic_cast<Enemy*>(o.get());
+        bool   isPK    = dynamic_cast<PigeonKing*>(o.get()) != nullptr;
+        if (isBossRoom && asEnemy && !isPK) {
+            int cur = 0;
+            for (auto& ex : objects) if (dynamic_cast<Enemy*>(ex.get()) && !dynamic_cast<PigeonKing*>(ex.get()) && ex->isActive()) cur++;
+            cur += static_cast<int>(pendingSpawns.size());
+            if (cur >= 7) continue; // at cap — discard
+            // Mark spawning so it is immune while the effect plays
+            asEnemy->setSpawning(true);
+            sf::FloatRect eb = asEnemy->getBounds();
+            sf::Vector2f  ep = { eb.left + eb.width/2.f, eb.top + eb.height/2.f };
+            SpawnEffect se;
+            se.pos           = ep;
+            se.timer         = 0.f;
+            se.isDash        = dynamic_cast<DashEnemy*>(o.get()) != nullptr;
+            se.tier          = 0;
+            se.isBossSpawn   = true;
+            se.pendingObject = std::move(o);
+            pendingSpawns.push_back(std::move(se));
+        } else {
+            objects.push_back(std::move(o));
+        }
+    }
     spawnQueue.clear();
 
     // ── Collision detection ───────────────────────────────────────────────────
@@ -642,6 +850,9 @@ void Game::update(float dt) {
 
             if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
                 if (playerPtr->getSwordBounds().intersects(enemy->getBounds())) {
+                    // PigeonKing: phase 1 always hittable, phase 2 only during VULNERABLE
+                    if (auto* pk = dynamic_cast<PigeonKing*>(enemy))
+                        if (!pk->isVulnerable()) continue;
                     bool wasAlive = enemy->isActive();
                     bool alreadyHit = playerPtr->hasHitThisSwing();
                     int dmg = playerPtr->isMonsterOneHit()
@@ -655,11 +866,17 @@ void Game::update(float dt) {
                         spawnDamageNumber(epos, std::min(dmg, 999), bigHit);
                     }
                     if (wasAlive && !enemy->isActive()) {
-                        int xpReward = dynamic_cast<DashEnemy*>(enemy) ? 3 : 2;
+                        // Clear any lingering wave zones when boss dies
+                        if (auto* pk = dynamic_cast<PigeonKing*>(enemy))
+                            pk->getWaveZones().clear();
+
+                        int xpReward = dynamic_cast<PigeonKing*>(enemy) ? 20
+                                     : dynamic_cast<DashEnemy*>(enemy)  ?  3 : 2;
                         playerPtr->addXP(xpReward);
 
                         sf::Vector2f deathPos = getRectCenter(enemy->getBounds());
-                        int coinDrop = dynamic_cast<DashEnemy*>(enemy) ? 2 : 1;
+                        int coinDrop = dynamic_cast<PigeonKing*>(enemy) ? 10
+                                     : dynamic_cast<DashEnemy*>(enemy)  ?  2 : 1;
                         static std::uniform_real_distribution<float> scatter(-8.f, 8.f);
                         auto findOpenCoinPos = [&](sf::Vector2f base) -> sf::Vector2f {
                             static const sf::Vector2f offsets[] = {
@@ -705,13 +922,19 @@ void Game::update(float dt) {
                 for (auto& ob : objects) {
                     if (auto* e = dynamic_cast<Enemy*>(ob.get())) {
                         if (e->isActive() && e->getBounds().intersects(bullet->getBounds())) {
+                            // PigeonKing: phase 1 always hittable, phase 2 only during VULNERABLE
+                            if (auto* pk = dynamic_cast<PigeonKing*>(e))
+                                if (!pk->isVulnerable()) continue;
                             bool wasAlive = e->isActive();
                             int dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
                             e->takeDamage(dmg);
                             if (wasAlive && !e->isActive()) {
-                                playerPtr->addXP(dynamic_cast<DashEnemy*>(e) ? 3 : 2);
+                                int xpR = dynamic_cast<PigeonKing*>(e) ? 20
+                                        : dynamic_cast<DashEnemy*>(e)  ?  3 : 2;
+                                playerPtr->addXP(xpR);
                                 sf::Vector2f deathPos = getRectCenter(e->getBounds());
-                                int coinDrop = dynamic_cast<DashEnemy*>(e) ? 2 : 1;
+                                int coinDrop = dynamic_cast<PigeonKing*>(e) ? 10
+                                             : dynamic_cast<DashEnemy*>(e)  ?  2 : 1;
                                 static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
                                 auto findOpenCoinPos2 = [&](sf::Vector2f base) -> sf::Vector2f {
                                     static const sf::Vector2f offsets[] = {
@@ -754,10 +977,13 @@ void Game::update(float dt) {
                     if (auto* de = dynamic_cast<DashEnemy*>(enemy)) {
                         if (de->isDashingNow()) {
                             if (!playerPtr->isDashingNow())
-                                playerPtr->takeDamage(1);  // dash still instant-hits
+                                playerPtr->takeDamage(1);
                             skipPush = true;
                         }
                     }
+                    // PigeonKing body contact does nothing — damage only via bullets
+                    if (dynamic_cast<PigeonKing*>(enemy))
+                        skipPush = true;
 
                     if (!skipPush) {
                         float overlapLeft   = (playerBounds.left + playerBounds.width)  - enemyBounds.left;
@@ -809,21 +1035,29 @@ void Game::update(float dt) {
     // Count living enemies; when the wave is wiped, spawn the next wave.
     // Starter room (index 0) is always pre-cleared, so this never fires there.
     int alive = 0;
-    for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get())) alive++;
+    for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get()) && o->isActive()) alive++;
+    // Pending spawns count as alive so the room never clears prematurely
+    int totalActive = alive + static_cast<int>(pendingSpawns.size());
 
-    if (alive == 0 && enemiesRemainingToSpawn > 0) {
+    if (!isBossRoom && totalActive == 0 && enemiesRemainingToSpawn > 0) {
         // Wave size: 1-3 early, grows to 1-5 later
         int minW = 1;
         int maxW = std::min(2 + currentRoomIndex / 3, 5);
         std::uniform_int_distribution<int> wsd(minW, maxW);
         int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
         for (int i = 0; i < wc; ++i) { spawnEnemy(); enemiesRemainingToSpawn--; }
-        alive = wc;
+        totalActive += wc;
     }
 
-    bool cleared = (alive == 0 && enemiesRemainingToSpawn == 0);
+    // Boss room clears when PigeonKing is gone and no minions remain
+    bool bossGone = true;
+    if (isBossRoom) { for (auto& o : objects) if (dynamic_cast<PigeonKing*>(o.get()) && o->isActive()) { bossGone = false; break; } }
+    bool cleared = isBossRoom
+        ? (bossGone && alive == 0 && pendingSpawns.empty())
+        : (totalActive == 0 && enemiesRemainingToSpawn == 0);
     rooms[currentRoomIndex]->setCleared(cleared);
 
+    updateSpawnEffects(dt);
     updateDamageNumbers(dt);
 
     // ── Vending proximity ─────────────────────────────────────────────────────
@@ -890,6 +1124,7 @@ void Game::render() {
     for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i)
         if (objects[i]->isActive()) objects[i]->draw(window);
 
+    drawSpawnEffects();
     drawDamageNumbers();
 
     Player* playerPtr = objects.empty()
@@ -920,13 +1155,19 @@ void Game::render() {
         }
     }
 
-    // Held item label — sits right of [Tab] Skills (anchored at x=150), before coins at x=330
+    // Held item label
     if (!heldItem.empty()) {
         sf::Text heldLabel("[F] " + heldItem, font, 16);
         heldLabel.setScale(0.75f, 0.75f);
         heldLabel.setFillColor(sf::Color(180, 230, 180));
-        // [Tab] Skills starts at 150 and is ~70px wide at 0.75 scale → start at 226
-        heldLabel.setPosition(226.f, 195.f + 1.f);
+        float hw = heldLabel.getGlobalBounds().width;
+        float hx = 328.f - hw - 4.f;
+        if (hx < 160.f) {
+            heldLabel.setScale(0.6f, 0.6f);
+            hw = heldLabel.getGlobalBounds().width;
+            hx = 328.f - hw - 4.f;
+        }
+        heldLabel.setPosition(std::max(2.f, hx), 195.f + 2.f);
         window.draw(heldLabel);
     }
 
@@ -943,6 +1184,182 @@ void Game::render() {
     if (skillTree.isOpen())  skillTree.render(window, playerPtr);
     if (vendingUI.isOpen())  vendingUI.render(window, totalCoins, heldItem);
     if (isPaused)            drawPauseMenu();
+
+    // ── Death fade overlay ────────────────────────────────────────────────────
+    if (appState == AppState::DYING) {
+        float t = std::min(1.f, fadeTimer / FADE_DURATION);
+        sf::Uint8 alpha = static_cast<sf::Uint8>(t * t * 255.f); // ease-in
+        sf::RectangleShape fadeRect({VIEW_W, VIEW_H});
+        fadeRect.setFillColor(sf::Color(0, 0, 0, alpha));
+        window.draw(fadeRect);
+    }
+
+    window.display();
+}
+
+// ── Game Over screen ──────────────────────────────────────────────────────────
+// Uses the same visual style as MainMenu (bg nodes, particles, scanlines).
+// We borrow MainMenu's render machinery by creating a temporary one.
+void Game::drawGameOver() {
+    if (!gameOverMenu) return;  // safety — should always exist here
+
+    window.clear(sf::Color::Black);
+
+    // Render the animated MainMenu background (advances its own internal timers)
+    gameOverMenu->render(window);
+
+    // ── Overdraw the panel with our custom "GAME OVER" content ───────────────
+    static constexpr float VIEW_W = 400.f;
+    static constexpr float VIEW_H = 225.f;
+    static constexpr float PI     = 3.14159265f;
+
+    auto rpx = [](float v){ return std::floor(v + 0.5f); };
+    auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
+
+    float selGlow = std::sin(gameOverTimer * 3.5f) * 0.5f + 0.5f;
+
+    // Panel — tall enough for title + 2 items
+    const float PW = 160.f;
+    const float PH = 88.f;
+    const float PX = rpx((VIEW_W - PW) * 0.5f);
+    const float PY = rpx(VIEW_H * 0.5f - PH * 0.5f + 14.f);
+
+    // Outer glow
+    {
+        float g = 3.f;
+        sf::RectangleShape glow({PW + g*2.f, PH + g*2.f});
+        glow.setFillColor(sf::Color(0,0,0,0));
+        glow.setOutlineThickness(g);
+        glow.setOutlineColor(sf::Color(
+            static_cast<sf::Uint8>(lerp(50.f, 90.f, selGlow)),
+            static_cast<sf::Uint8>(lerp(20.f, 40.f, selGlow)),
+            static_cast<sf::Uint8>(lerp(90.f, 150.f, selGlow)),
+            static_cast<sf::Uint8>(selGlow * 80.f)));
+        glow.setPosition(rpx(PX - g), rpx(PY - g));
+        window.draw(glow);
+    }
+
+    sf::RectangleShape panel({PW, PH});
+    panel.setFillColor(sf::Color(9, 9, 20));
+    panel.setOutlineThickness(1.f);
+    panel.setOutlineColor(sf::Color(
+        static_cast<sf::Uint8>(lerp(50.f, 90.f, selGlow)),
+        static_cast<sf::Uint8>(lerp(32.f, 55.f, selGlow)),
+        static_cast<sf::Uint8>(lerp(90.f, 150.f, selGlow))));
+    panel.setPosition(rpx(PX), rpx(PY));
+    window.draw(panel);
+
+    // Inner top highlight
+    sf::RectangleShape topLine({PW - 4.f, 1.f});
+    topLine.setFillColor(sf::Color(90, 60, 140, 40));
+    topLine.setPosition(rpx(PX + 2.f), rpx(PY + 1.f));
+    window.draw(topLine);
+
+    // Corner dots
+    for (int cx = 0; cx < 2; ++cx) for (int cy = 0; cy < 2; ++cy) {
+        float cr = 2.2f;
+        sf::CircleShape cd(cr); cd.setOrigin(cr, cr);
+        cd.setPosition(rpx(PX + cx * PW), rpx(PY + cy * PH));
+        cd.setFillColor(sf::Color(
+            static_cast<sf::Uint8>(lerp(80.f, 140.f, selGlow)),
+            static_cast<sf::Uint8>(lerp(55.f, 100.f, selGlow)),
+            static_cast<sf::Uint8>(lerp(140.f, 220.f, selGlow)), 200));
+        window.draw(cd);
+    }
+
+    // "GAME OVER" title — pulsing red-purple
+    float tp = std::sin(gameOverTimer * 1.4f) * 0.5f + 0.5f;
+    sf::Text goTitle("GAME OVER", font, 16);
+    goTitle.setFillColor(sf::Color(
+        static_cast<sf::Uint8>(lerp(200.f, 255.f, tp)),
+        static_cast<sf::Uint8>(lerp(50.f,  90.f,  tp)),
+        static_cast<sf::Uint8>(lerp(100.f, 160.f, tp))));
+    float gtw = goTitle.getLocalBounds().width;
+    goTitle.setPosition(rpx(PX + PW * 0.5f - gtw * 0.5f), rpx(PY + 8.f));
+    window.draw(goTitle);
+
+    // Thin line under title
+    float lineW = 100.f;
+    sf::RectangleShape titleLine({lineW, 1.f});
+    titleLine.setFillColor(sf::Color(120, 40, 80, 120));
+    titleLine.setPosition(rpx(PX + PW * 0.5f - lineW * 0.5f), rpx(PY + 26.f));
+    window.draw(titleLine);
+    // Dots at ends of line
+    for (int side = 0; side < 2; ++side) {
+        float dr = 1.8f;
+        sf::CircleShape d(dr); d.setOrigin(dr, dr);
+        d.setPosition(rpx(PX + PW*0.5f - lineW*0.5f + side*lineW), rpx(PY + 26.f));
+        d.setFillColor(sf::Color(180, 60, 120, 180));
+        window.draw(d);
+    }
+
+    // ── Menu items ────────────────────────────────────────────────────────────
+    const float ITEM_H = 20.f;
+    const char* labels[] = { "Reborn", "Main Menu" };
+    for (int i = 0; i < 2; ++i) {
+        float iy  = PY + 34.f + i * ITEM_H;
+        bool  sel = (gameOverSel == i);
+        float sg  = sel ? selGlow : 0.f;
+
+        // Highlight bar (only for selected)
+        if (sel) {
+            sf::RectangleShape hl({PW - 6.f, ITEM_H - 2.f});
+            hl.setFillColor(sf::Color(
+                static_cast<sf::Uint8>(lerp(28.f, 50.f, sg)),
+                static_cast<sf::Uint8>(lerp(18.f, 30.f, sg)),
+                static_cast<sf::Uint8>(lerp(55.f, 80.f, sg))));
+            hl.setOutlineThickness(1.f);
+            hl.setOutlineColor(sf::Color(
+                static_cast<sf::Uint8>(lerp(80.f, 140.f, sg)),
+                static_cast<sf::Uint8>(lerp(50.f, 90.f,  sg)),
+                static_cast<sf::Uint8>(lerp(150.f, 210.f, sg))));
+            hl.setPosition(rpx(PX + 3.f), rpx(iy));
+            window.draw(hl);
+
+            // Node dot
+            float dotR = 2.5f;
+            sf::CircleShape dot(dotR); dot.setOrigin(dotR, dotR);
+            dot.setPosition(rpx(PX + 3.f + dotR), rpx(iy + ITEM_H * 0.5f - 1.f));
+            dot.setFillColor(sf::Color(255,
+                static_cast<sf::Uint8>(lerp(190.f, 220.f, sg)), 50,
+                static_cast<sf::Uint8>(lerp(180.f, 255.f, sg))));
+            window.draw(dot);
+
+            // Short connector line from dot into text
+            sf::Vector2f a{rpx(PX + 3.f + dotR*2.f), rpx(iy + ITEM_H*0.5f - 1.f)};
+            sf::Vector2f b{rpx(PX + 16.f),            rpx(iy + ITEM_H*0.5f - 1.f)};
+            sf::Vector2f d2 = b - a;
+            float len = std::sqrt(d2.x*d2.x + d2.y*d2.y);
+            if (len > 0.f) {
+                sf::RectangleShape line({len, 0.8f});
+                line.setFillColor(sf::Color(255, 210, 50,
+                    static_cast<sf::Uint8>(lerp(100.f, 200.f, sg))));
+                line.setOrigin(0.f, 0.4f);
+                line.setPosition(a);
+                line.setRotation(std::atan2(d2.y, d2.x) * 180.f / PI);
+                window.draw(line);
+            }
+        }
+
+        // Label text
+        sf::Text itemText(labels[i], font, 16);
+        itemText.setFillColor(sel
+            ? sf::Color(
+                static_cast<sf::Uint8>(lerp(200.f, 240.f, sg)),
+                static_cast<sf::Uint8>(lerp(185.f, 225.f, sg)),
+                255)
+            : sf::Color(130, 120, 155));
+        itemText.setPosition(rpx(PX + 20.f), rpx(iy + 1.f));
+        window.draw(itemText);
+    }
+
+    // Hint at bottom
+    sf::Text hint("W/S  E=select", font, 16);
+    hint.setScale(0.65f, 0.65f);
+    hint.setFillColor(sf::Color(45, 35, 70));
+    float hw = hint.getGlobalBounds().width;
+    hint.setPosition(rpx((VIEW_W - hw) * 0.5f), rpx(VIEW_H - 14.f));
+    window.draw(hint);
 
     window.display();
 }

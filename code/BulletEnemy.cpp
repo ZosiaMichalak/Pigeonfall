@@ -103,7 +103,10 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
     bool isMoving = false;
 
     if (state == BulletEnemyState::RETREAT) {
-        if (dist > 0.f) { desiredMove = (-toPlayer / dist) * moveSpeed; isMoving = true; }
+        // The closer the player, the faster the retreat (up to 2.5× base speed)
+        float panicT     = 1.f - std::min(1.f, dist / 70.f); // 1.0 when touching, 0.0 at 70px
+        float retreatSpd = moveSpeed * (1.f + panicT * 1.5f);
+        if (dist > 0.f) { desiredMove = (-toPlayer / dist) * retreatSpd; isMoving = true; }
     } else if (state == BulletEnemyState::CHASE) {
         if (dist > 0.f) { desiredMove = (toPlayer / dist) * moveSpeed; isMoving = true; }
     }

@@ -34,6 +34,7 @@ protected:
     int   maxHp;
     bool  isHit;
     float hitTimer;
+    bool  isSpawning = false;  // true during spawn animation — immune to damage
 
     float moveSpeed;
 
@@ -49,7 +50,9 @@ public:
     void draw(sf::RenderWindow& window) override;
     void takeDamage(int damage);
 
-    bool          getIsHit()  const { return isHit; }
+    bool          getIsHit()     const { return isHit; }
+    bool          getIsSpawning()const { return isSpawning; }
+    void          setSpawning(bool v)  { isSpawning = v; }
     int           getHp()     const { return hp; }
 
     // Tight body hitbox used for collision with player

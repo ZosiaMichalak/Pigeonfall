@@ -19,7 +19,7 @@ static const VendingItem VENDING_CATALOGUE[] = {
     { "Pizza",          20, sf::Color(220, 100,  20) },
     { "Duo",            40, sf::Color(200, 160,  20) },
     { "Annoying Dog",   50, sf::Color(200, 200, 200) },
-    { "Totem",         100, sf::Color(120,  60, 200) },
+    { "Totem",         10, sf::Color(120,  60, 200) },
 };
 static constexpr int CATALOGUE_SIZE = 5;
 static constexpr int SHOP_SLOTS     = 3;
@@ -30,7 +30,9 @@ public:
     explicit VendingUI(sf::Font& font);
 
     bool isOpen() const { return open; }
-    void rollItems();  // call once on room entry to randomise the 3 slots
+    // Call once on room entry. Pass true if Totem was already bought this run
+    // so it gets excluded from the pool entirely.
+    void rollItems(bool totemAlreadyBought = false);
     void openShop();   // opens the UI (no re-roll)
     void close();
 

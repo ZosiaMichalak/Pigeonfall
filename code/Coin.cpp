@@ -69,5 +69,5 @@ void Coin::draw(sf::RenderWindow& window) {
 }
 
 sf::FloatRect Coin::getBounds() const {
-    return { position.x - 5.f, position.y - 5.f, 10.f, 10.f };
+    return { position.x - 10.f, position.y - 10.f, 20.f, 20.f };
 }

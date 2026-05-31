@@ -43,6 +43,7 @@ void Enemy::tickAnim(float dt) {
 }
 
 void Enemy::takeDamage(int damage) {
+    if (isSpawning) return;  // immune during spawn animation
     if (!isHit) {
         hp -= damage;
         isHit    = true;

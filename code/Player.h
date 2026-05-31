@@ -47,6 +47,7 @@ private:
     static std::array<int, SKILL_COUNT> persistentUpgrades;
     static bool                         persistentSecondChanceUsed;
     static int                          persistentTotemCharges;
+    static bool                         persistentTotemBoughtThisRun;
 
     // Dane bieżącej instancji gracza
     int xp;
@@ -94,6 +95,22 @@ private:
     bool  hitConnectedThisSwing; // true once per attack swing when an enemy is hit
 
     // Tekstury i sprite'y SFML
+    // ── Held-item overlay textures ────────────────────────────────────────────
+    // Loaded lazily when the held item changes
+    sf::Texture textureHeldIdle;
+    sf::Texture textureHeldWalk;
+    bool        hasHeldIdle  = false;
+    bool        hasHeldWalk  = false;
+    std::string loadedHeldItem;
+    int         monsterVariant = 0;
+    bool        monsterWalkLocked = false;
+
+    // Dedicated monster-mode animation (player_monsterMode.png)
+    sf::Texture textureMonsterMode;
+    bool        hasMonsterModeTexture = false;
+
+    void loadHeldTextures(const std::string& item);
+
     sf::Texture textureIdle;
     sf::Texture textureWalk;
     sf::Texture textureAttack;
@@ -165,9 +182,11 @@ public:
     void buySkill(int id);
     bool isSecondChanceUsed()    const { return persistentSecondChanceUsed; }
     int  getTotemCharges()       const { return persistentTotemCharges; }
+    bool hasTotemThisRun()       const { return persistentTotemBoughtThisRun; }
     void addTotemCharge();
 
     void  applyMonsterBuff();
+    void  setHeldItem(const std::string& item); // call whenever heldItem changes
     void  healFull();
     bool  hasMonsterBuff()       const { return monsterBuffTimer > 0.f; }
     
