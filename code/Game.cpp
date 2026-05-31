@@ -1,4 +1,5 @@
 #include "Game.h"
+#include "SoundManager.h"
 #include "SaveSystem.h"
 #include "Bullet.h"
 #include "Car.h"
@@ -68,10 +69,11 @@ Game::Game()
     Flowers::loadTexture();
     Car::loadTextures();
     loadSpawnTextures();
+    loadEButton();
 
     // ── Main menu ─────────────────────────────────────────────────────────────
     appState = AppState::MENU;
-    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
 
     // ── Music ─────────────────────────────────────────────────────────────────
     if (music.openFromFile("music/Track12.wav")) {
@@ -156,6 +158,10 @@ void Game::refreshFontTextures() {
 
 void Game::applyMusicVolume() {
     music.setVolume(static_cast<float>(musicVolume));
+}
+
+void Game::applySFXVolume() {
+    soundMgr.setVolume(sfxVolume);
 }
 
 // ── Vending proximity helper ──────────────────────────────────────────────────
@@ -270,6 +276,33 @@ void Game::updateSpawnEffects(float dt) {
     }
 }
 
+void Game::loadEButton() {
+    if (eButtonLoaded) return;
+    if (eButtonTexture.loadFromFile("assets/EButton.png")) {
+        eButtonTexture.setSmooth(false);
+        eButtonSprite.setTexture(eButtonTexture);
+        eButtonSprite.setOrigin(7.5f, 7.5f); // centre of 15x15 frame
+        eButtonLoaded = true;
+    }
+}
+
+void Game::drawEButton(sf::Vector2f pos) {
+    if (eButtonAlpha <= 0.f) return;
+
+    if (eButtonLoaded) {
+        int frame = static_cast<int>(eButtonFrame) % 2;
+        eButtonSprite.setTextureRect(sf::IntRect(0, frame * 15, 15, 15));
+        eButtonSprite.setPosition(pos);
+        eButtonSprite.setColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(eButtonAlpha)));
+        window.draw(eButtonSprite);
+    } else {
+        interactText.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(eButtonAlpha)));
+        interactText.setPosition(pos.x - 10.f, pos.y - 8.f);
+        window.draw(interactText);
+        interactText.setFillColor(sf::Color::White);
+    }
+}
+
 void Game::loadSpawnTextures() {
     if (spawnTexLoaded) return;
     spawnTexBullet.loadFromFile("assets/bulletEnemy_spawn.png");
@@ -369,6 +402,7 @@ void Game::resetRun() {
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
     totalCoins              = 50;
+    playTime                = 0.f;
     heldItem                = "";
     skillTree.close();
     vendingUI.close();
@@ -404,9 +438,12 @@ void Game::saveGame(int slot) {
 
     sd.roomIndex   = currentRoomIndex;
     sd.coins       = totalCoins;
+    sd.playTime    = playTime;
+    sd.roomCleared = rooms[currentRoomIndex]->getIsCleared();
     sd.heldItem    = heldItem;
     sd.fullscreen  = isFullscreen;
     sd.musicVolume = musicVolume;
+    sd.sfxVolume   = sfxVolume;
 
     SaveSystem::save(sd, slot);
 }
@@ -422,13 +459,71 @@ void Game::loadGame(int slot) {
     }
     isFullscreen = sd.fullscreen;
     musicVolume  = sd.musicVolume;
+    sfxVolume    = sd.sfxVolume;
     applyWindowMode();
     applyMusicVolume();
+    applySFXVolume();
     heldItem   = sd.heldItem;
     totalCoins = sd.coins;
+    playTime   = sd.playTime;
 
-    currentRoomIndex = 0;
-    for (int i = 0; i < sd.roomIndex; ++i) nextRoom();
+    // Sync held item to the player so overlay textures load correctly
+    if (!objects.empty()) {
+        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+            p->setHeldItem(heldItem);
+    }
+
+    // Jump directly to the saved room without fighting through intermediate ones
+    int targetRoom = sd.roomIndex;
+    if (targetRoom > 0) {
+        currentRoomIndex = targetRoom;
+
+        // Build rooms up to the target index if needed
+        while (static_cast<int>(rooms.size()) <= currentRoomIndex) {
+            RoomTemplate tmpl = RoomTemplates::getRandom();
+            rooms.push_back(std::make_unique<Room>(static_cast<int>(rooms.size()), tmpl));
+            rooms.back()->loadAssets();
+        }
+
+        // Boss room override at index 4
+        isBossRoom = (currentRoomIndex == 4);
+        if (isBossRoom) {
+            RoomTemplate bossTemplate;
+            bossTemplate.name         = "Boss Arena";
+            bossTemplate.background   = 0;
+            bossTemplate.props        = {};
+            bossTemplate.doorPosition = {400.f, 100.f};
+            bossTemplate.doorRotation = 90.f;
+            bossTemplate.playerStart  = {50.f, 110.f};
+            rooms[currentRoomIndex]   = std::make_unique<Room>(currentRoomIndex, bossTemplate);
+            rooms[currentRoomIndex]->loadAssets();
+        }
+
+        // Place the player at this room's start position
+        sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
+        if (!objects.empty()) {
+            if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+                p->setPosition(startPos);
+        }
+
+        // Set up enemies for this room (not yet spawned — same as nextRoom does)
+        int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
+        enemiesRemainingToSpawn = isBossRoom ? 0 : totalEnemies;
+
+        // If the room was already cleared when saving, restore that state
+        if (sd.roomCleared) {
+            enemiesRemainingToSpawn = 0;
+            rooms[currentRoomIndex]->setCleared(true);
+        }
+
+        if (isBossRoom)
+            objects.push_back(std::make_unique<PigeonKing>(200.f, 60.f));
+
+        vendingUI.rollItems();
+        vendingUI.close();
+        nearVending = false;
+        pendingSpawns.clear();
+    }
 }
 
 // ── Pause menu ────────────────────────────────────────────────────────────────
@@ -437,32 +532,76 @@ void Game::drawPauseMenu() {
     overlay.setFillColor(sf::Color(0, 0, 0, 180));
     window.draw(overlay);
 
-    sf::Text pauseTitle("PAUSE", font, 24);
-    pauseTitle.setFillColor(sf::Color::White);
-    pauseTitle.setPosition(VIEW_W / 2.f - pauseTitle.getGlobalBounds().width / 2.f, 30.f);
-    window.draw(pauseTitle);
+    if (pauseInOptions) {
+        // ── OPTIONS sub-screen ────────────────────────────────────────────────
+        sf::Text title("OPTIONS", font, 24);
+        title.setFillColor(sf::Color::White);
+        title.setPosition(VIEW_W / 2.f - title.getGlobalBounds().width / 2.f, 30.f);
+        window.draw(title);
 
-    std::vector<std::string> pauseItems = { "SAVE GAME", "OPTIONS", "QUIT" };
-    for (int i = 0; i < 3; ++i) {
-        sf::Text itemText(pauseItems[i], font, 16);
-        if (i == pauseSel) {
-            itemText.setFillColor(sf::Color(255, 210, 50));
-            sf::Text marker(">", font, 16);
-            marker.setFillColor(sf::Color(255, 210, 50));
-            marker.setPosition(VIEW_W / 2.f - 60.f, 85.f + i * 25.f);
-            window.draw(marker);
-        } else {
-            itemText.setFillColor(sf::Color(140, 130, 160));
+        // Rows: Fullscreen, Music Volume, SFX Volume, Back
+        struct OptRow { std::string label; std::string value; };
+        std::vector<OptRow> rows = {
+            { "Fullscreen", isFullscreen ? "ON" : "OFF" },
+            { "Music Vol",  std::to_string(musicVolume) },
+            { "SFX Vol",    std::to_string(sfxVolume)   },
+            { "Back",       "" }
+        };
+        for (int i = 0; i < (int)rows.size(); ++i) {
+            float ry = 75.f + i * 26.f;
+            bool sel = (i == pauseOptSel);
+            sf::Color col = sel ? sf::Color(255, 210, 50) : sf::Color(140, 130, 160);
+            if (sel) {
+                sf::Text marker(">", font, 16);
+                marker.setFillColor(col);
+                marker.setPosition(VIEW_W / 2.f - 75.f, ry);
+                window.draw(marker);
+            }
+            sf::Text lbl(rows[i].label, font, 16);
+            lbl.setFillColor(col);
+            lbl.setPosition(VIEW_W / 2.f - 55.f, ry);
+            window.draw(lbl);
+            if (!rows[i].value.empty()) {
+                std::string valStr = "<  " + rows[i].value + "  >";
+                sf::Text val(valStr, font, 16);
+                val.setFillColor(col);
+                val.setPosition(VIEW_W / 2.f + 30.f, ry);
+                window.draw(val);
+            }
         }
-        itemText.setPosition(VIEW_W / 2.f - 40.f, 85.f + i * 25.f);
-        window.draw(itemText);
-    }
+        sf::Text hint("W/S navigate  A/D change  Q=back", font, 16);
+        hint.setScale(0.65f, 0.65f);
+        hint.setFillColor(sf::Color(90, 80, 125));
+        hint.setPosition(VIEW_W / 2.f - hint.getGlobalBounds().width / 2.f, VIEW_H - 20.f);
+        window.draw(hint);
+    } else {
+        // ── Main pause screen ─────────────────────────────────────────────────
+        sf::Text pauseTitle("PAUSE", font, 24);
+        pauseTitle.setFillColor(sf::Color::White);
+        pauseTitle.setPosition(VIEW_W / 2.f - pauseTitle.getGlobalBounds().width / 2.f, 30.f);
+        window.draw(pauseTitle);
 
-    sf::Text hint("W/S  E=select  Q=close", font, 16);
-    hint.setScale(0.65f, 0.65f);
-    hint.setFillColor(sf::Color(90, 80, 125));
-    hint.setPosition(VIEW_W / 2.f - hint.getGlobalBounds().width / 2.f, VIEW_H - 20.f);
-    window.draw(hint);
+        std::vector<std::string> pauseItems = { "SAVE GAME", "OPTIONS", "QUIT" };
+        for (int i = 0; i < 3; ++i) {
+            sf::Text itemText(pauseItems[i], font, 16);
+            if (i == pauseSel) {
+                itemText.setFillColor(sf::Color(255, 210, 50));
+                sf::Text marker(">", font, 16);
+                marker.setFillColor(sf::Color(255, 210, 50));
+                marker.setPosition(VIEW_W / 2.f - 60.f, 85.f + i * 25.f);
+                window.draw(marker);
+            } else {
+                itemText.setFillColor(sf::Color(140, 130, 160));
+            }
+            itemText.setPosition(VIEW_W / 2.f - 40.f, 85.f + i * 25.f);
+            window.draw(itemText);
+        }
+        sf::Text hint("W/S  E=select  Q=close", font, 16);
+        hint.setScale(0.65f, 0.65f);
+        hint.setFillColor(sf::Color(90, 80, 125));
+        hint.setPosition(VIEW_W / 2.f - hint.getGlobalBounds().width / 2.f, VIEW_H - 20.f);
+        window.draw(hint);
+    }
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -490,7 +629,7 @@ void Game::run() {
                             appState = AppState::PLAYING;
                         } else {
                             resetRun();
-                            mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+                            mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
                             appState = AppState::MENU;
                         }
                         gameOverMenu.reset();
@@ -520,14 +659,18 @@ void Game::run() {
                     activeSlot = slotUI.getSelectedSlot();
                     if (pendingMenuAction == MenuAction::LOAD_GAME) {
                         loadGame(activeSlot);
-                    } else {
-                        // NEW_GAME: wipe any existing save in that slot and start fresh
+                    } else if (pendingMenuAction == MenuAction::NEW_GAME) {
+                        // Wipe the chosen slot and start a fresh run
                         SaveSystem::deleteSlot(activeSlot);
                         resetRun();
+                    } else {
+                        // SAVE from pause menu — just save to the chosen slot
+                        saveGame(activeSlot);
                     }
                     appState = AppState::PLAYING;
                 } else if (result == SlotUIResult::CANCELLED) {
-                    appState = AppState::MENU;
+                    // If we came from the pause menu, return to playing; otherwise back to menu
+                    appState = (pendingMenuAction == MenuAction::NONE) ? AppState::PLAYING : AppState::MENU;
                 }
                 continue;
             }
@@ -539,7 +682,7 @@ void Game::run() {
                     wasF11Pressed = true;
                     isFullscreen = !isFullscreen;
                     applyWindowMode();
-                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
                 }
                 if (event.type == sf::Event::KeyReleased &&
                     event.key.code == sf::Keyboard::F11)
@@ -563,11 +706,15 @@ void Game::run() {
                 if (mainMenu->fullscreen() != isFullscreen) {
                     isFullscreen = mainMenu->fullscreen();
                     applyWindowMode();
-                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
                 }
                 if (mainMenu->musicVolume() != musicVolume) {
                     musicVolume = mainMenu->musicVolume();
                     applyMusicVolume();
+                }
+                if (mainMenu->sfxVolume() != sfxVolume) {
+                    sfxVolume = mainMenu->sfxVolume();
+                    applySFXVolume();
                 }
                 continue;
             }
@@ -582,26 +729,45 @@ void Game::run() {
 
                 if (isPaused) {
                     if (event.type == sf::Event::KeyPressed) {
-                        if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
-                            pauseSel = (pauseSel - 1 + 3) % 3;
-                        if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
-                            pauseSel = (pauseSel + 1) % 3;
-                        if (event.key.code == sf::Keyboard::E) {
-                            if (pauseSel == 0) {
-                                // Show slot UI in SAVE mode
-                                pendingMenuAction = MenuAction::NEW_GAME; // reuse as "save intent"
-                                slotUI.open(SlotUIMode::SAVE);
-                                appState = AppState::SLOT_SELECT;
-                                isPaused = false;
+                        if (pauseInOptions) {
+                            // ── Options sub-menu navigation ───────────────────
+                            if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                                pauseOptSel = (pauseOptSel - 1 + 4) % 4;
+                            if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
+                                pauseOptSel = (pauseOptSel + 1) % 4;
+                            // A/Left decrements, D/Right increments
+                            auto changeOpt = [&](int delta) {
+                                if (pauseOptSel == 0) { isFullscreen = !isFullscreen; applyWindowMode(); }
+                                else if (pauseOptSel == 1) { musicVolume = std::max(0, std::min(100, musicVolume + delta * 10)); applyMusicVolume(); }
+                                else if (pauseOptSel == 2) { sfxVolume   = std::max(0, std::min(100, sfxVolume   + delta * 10)); applySFXVolume(); }
+                                else if (pauseOptSel == 3) { pauseInOptions = false; }
+                            };
+                            if (event.key.code == sf::Keyboard::Left  || event.key.code == sf::Keyboard::A) changeOpt(-1);
+                            if (event.key.code == sf::Keyboard::Right || event.key.code == sf::Keyboard::D) changeOpt(+1);
+                            if (event.key.code == sf::Keyboard::E) changeOpt(+1);
+                            if (event.key.code == sf::Keyboard::Q) { pauseInOptions = false; }
+                        } else {
+                            // ── Main pause screen navigation ──────────────────
+                            if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
+                                pauseSel = (pauseSel - 1 + 3) % 3;
+                            if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
+                                pauseSel = (pauseSel + 1) % 3;
+                            if (event.key.code == sf::Keyboard::E) {
+                                if (pauseSel == 0) {
+                                    pendingMenuAction = MenuAction::NONE;
+                                    slotUI.open(SlotUIMode::SAVE);
+                                    appState = AppState::SLOT_SELECT;
+                                    isPaused = false;
+                                }
+                                else if (pauseSel == 1) { pauseInOptions = true; pauseOptSel = 0; }
+                                else if (pauseSel == 2) {
+                                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
+                                    appState = AppState::MENU;
+                                    isPaused = false;
+                                }
                             }
-                            else if (pauseSel == 1) { isFullscreen = !isFullscreen; applyWindowMode(); }
-                            else if (pauseSel == 2) {
-                                mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
-                                appState = AppState::MENU;
-                                isPaused = false;
-                            }
+                            if (event.key.code == sf::Keyboard::Q) { isPaused = false; pauseInOptions = false; }
                         }
-                        if (event.key.code == sf::Keyboard::Q) { isPaused = false; }
                     }
                     continue;
                 }
@@ -678,7 +844,7 @@ void Game::run() {
                 appState      = AppState::GAME_OVER;
                 gameOverTimer = 0.f;
                 gameOverSel   = 0;
-                gameOverMenu  = std::make_unique<MainMenu>(font, false, isFullscreen);
+                gameOverMenu  = std::make_unique<MainMenu>(font, false, isFullscreen, musicVolume, sfxVolume);
             }
         } else if (appState == AppState::GAME_OVER) {
             gameOverTimer += dt;
@@ -694,6 +860,9 @@ void Game::run() {
 // ── Update ────────────────────────────────────────────────────────────────────
 void Game::update(float dt) {
     if (isPaused) return;
+
+    // Accumulate play time while actively playing
+    playTime += dt;
 
     Player* playerPtr = objects.empty()
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
@@ -728,6 +897,10 @@ void Game::update(float dt) {
 
     std::vector<std::unique_ptr<GameObject>> spawnQueue;
 
+    // ── Capture pre-update player state for edge detection ───────────────────
+    bool prevDashing   = playerPtr ? playerPtr->isDashingNow()   : false;
+    bool prevAttacking = playerPtr ? playerPtr->isAttackingNow() : false;
+
     // ── Object updates ────────────────────────────────────────────────────────
     for (auto& obj : objects) {
         if (!obj->isActive()) continue;
@@ -739,6 +912,34 @@ void Game::update(float dt) {
             helper->tryHitEnemy(objects);
         if (auto* dog = dynamic_cast<AnnoyingDog*>(obj.get()))
             dog->tryExplode(objects, spawnQueue);
+    }
+
+    // ── Player sound edge detection ───────────────────────────────────────────
+    if (playerPtr && playerPtr->isActive()) {
+        // Dash start
+        if (!prevDashing && playerPtr->isDashingNow())
+            soundMgr.play(SFX::DASH);
+        // Sword swing start
+        if (!prevAttacking && playerPtr->isAttackingNow())
+            soundMgr.play(SFX::SWORD_SWING);
+        // Footsteps — fire on a timer while moving and not dashing
+        bool isMoving = sf::Keyboard::isKeyPressed(sf::Keyboard::W) ||
+                        sf::Keyboard::isKeyPressed(sf::Keyboard::A) ||
+                        sf::Keyboard::isKeyPressed(sf::Keyboard::S) ||
+                        sf::Keyboard::isKeyPressed(sf::Keyboard::D);
+        if (isMoving && !playerPtr->isDashingNow()) {
+            stepsTimer += dt;
+            if (stepsTimer >= 0.32f) { soundMgr.play(SFX::STEPS); stepsTimer = 0.f; }
+        } else {
+            stepsTimer = 0.f;
+        }
+    }
+
+    // ── Enemy dash sound ──────────────────────────────────────────────────────
+    for (auto& obj : objects) {
+        if (auto* de = dynamic_cast<DashEnemy*>(obj.get())) {
+            if (de->justStartedDash()) soundMgr.play(SFX::DASH);
+        }
     }
 
     // ── Boss wave zone damage ─────────────────────────────────────────────────
@@ -900,9 +1101,11 @@ void Game::update(float dt) {
                         if (!pk->isVulnerable()) continue;
                     bool wasAlive    = enemy->isActive();
                     bool alreadyHit  = playerPtr->hasHitThisSwing();
+                    bool enemyWasHit = enemy->getIsHit();
                     int  dmg         = playerPtr->isMonsterOneHit()
                         ? 9999 : playerPtr->registerHit();
                     enemy->takeDamage(dmg);
+                    if (!enemyWasHit) soundMgr.play(SFX::HIT);
                     if (!alreadyHit) {
                         sf::Vector2f epos = getRectCenter(enemy->getBounds());
                         bool bigHit = (!playerPtr->isMonsterOneHit() && playerPtr->getComboCount() == 3);
@@ -956,7 +1159,9 @@ void Game::update(float dt) {
             if (bullet->isFromEnemy()) {
                 if (playerPtr && playerPtr->getBounds().intersects(bullet->getBounds())) {
                     if (!playerPtr->isDashingNow()) {
+                        int hpBefore = playerPtr->getHp();
                         playerPtr->takeDamage(1);
+                        if (playerPtr->getHp() < hpBefore) soundMgr.play(SFX::HIT);
                         bullet->destroy();
                     }
                 }
@@ -968,7 +1173,9 @@ void Game::update(float dt) {
                                 if (!pk->isVulnerable()) continue;
                             bool wasAlive = e->isActive();
                             int  dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
+                            bool eWasHit = e->getIsHit();
                             e->takeDamage(dmg);
+                            if (!eWasHit) soundMgr.play(SFX::HIT);
                             if (wasAlive && !e->isActive()) {
                                 int xpR = dynamic_cast<PigeonKing*>(e) ? 20
                                         : dynamic_cast<DashEnemy*>(e)  ?  3 : 2;
@@ -1017,8 +1224,12 @@ void Game::update(float dt) {
                     bool skipPush = false;
                     if (auto* de = dynamic_cast<DashEnemy*>(enemy)) {
                         if (de->isDashingNow()) {
-                            if (!playerPtr->isDashingNow())
+                            if (!playerPtr->isDashingNow()) {
+                                bool wasInvincible = playerPtr->getHp() <= 0; // use actual damage flag
+                                int hpBefore = playerPtr->getHp();
                                 playerPtr->takeDamage(1);
+                                if (playerPtr->getHp() < hpBefore) soundMgr.play(SFX::HIT);
+                            }
                             skipPush = true;
                         }
                     }
@@ -1059,10 +1270,15 @@ void Game::update(float dt) {
             if (playerPtr && playerPtr->getBounds().intersects(coin->getBounds())) {
                 coin->destroy();
                 ++totalCoins;
+                soundMgr.play(SFX::COIN);
             }
         }
     }
 
+    // Play shoot SFX for each enemy bullet just spawned
+    for (auto& o : spawnQueue)
+        if (auto* b = dynamic_cast<Bullet*>(o.get()))
+            if (b->isFromEnemy()) soundMgr.play(SFX::SHOOT);
     for (auto& o : spawnQueue) objects.push_back(std::move(o));
     spawnQueue.clear();
 
@@ -1095,6 +1311,34 @@ void Game::update(float dt) {
     updateSpawnEffects(dt);
     updateDamageNumbers(dt);
 
+    // ── E-button prompt animation ─────────────────────────────────────────────
+    {
+        // Determine if prompt should be showing this frame
+        bool doorNear = false;
+        bool vendNear = nearVending; // will be set below, use previous frame's value
+        if (playerPtr && playerPtr->isActive() && rooms[currentRoomIndex]->getIsCleared()) {
+            sf::Vector2f pp = getRectCenter(playerPtr->getBounds());
+            sf::Vector2f dp = rooms[currentRoomIndex]->getDoorPosition();
+            float ddx = pp.x - dp.x, ddy = pp.y - dp.y;
+            doorNear = std::sqrt(ddx*ddx + ddy*ddy) < 70.f;
+        }
+        eButtonVisible = (doorNear || nearVending) && !vendingUI.isOpen();
+
+        // Fade in/out
+        float fadeSpeed = 400.f; // alpha units per second
+        if (eButtonVisible)
+            eButtonAlpha = std::min(255.f, eButtonAlpha + fadeSpeed * dt);
+        else
+            eButtonAlpha = std::max(0.f, eButtonAlpha - fadeSpeed * dt);
+
+        // Flip frame every 0.5s
+        eButtonAnim += dt;
+        if (eButtonAnim >= 0.5f) {
+            eButtonAnim -= 0.5f;
+            eButtonFrame = 1.f - eButtonFrame;
+        }
+    }
+
     // ── Vending proximity ─────────────────────────────────────────────────────
     nearVending = false;
     if (playerPtr && playerPtr->isActive()) {
@@ -1107,8 +1351,10 @@ void Game::update(float dt) {
                 nearVending = true;
 
                 bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
-                if (eNow && !wasEPressed && !skillTree.isOpen())
+                if (eNow && !wasEPressed && !skillTree.isOpen()) {
                     vendingUI.openShop();
+                    soundMgr.play(SFX::VENDING_OPEN);
+                }
                 wasEPressed = eNow;
             }
         }
@@ -1165,26 +1411,21 @@ void Game::render() {
     hud.renderSkillsHint(window, playerPtr);
     hud.render(window, playerPtr, rooms[currentRoomIndex]->getId(), totalCoins);
 
-    // Door [E] prompt
+    // Door E-button prompt — centred on the door sprite
     if (playerPtr && rooms[currentRoomIndex]->getIsCleared() && !nearVending) {
         sf::Vector2f pp = getRectCenter(playerPtr->getBounds());
         sf::Vector2f dp = rooms[currentRoomIndex]->getDoorPosition();
         float dx = pp.x - dp.x, dy = pp.y - dp.y;
-        if (std::sqrt(dx*dx + dy*dy) < 70.f) {
-            interactText.setPosition(dp.x - 10.f, dp.y - 24.f);
-            window.draw(interactText);
-        }
+        if (std::sqrt(dx*dx + dy*dy) < 70.f)
+            drawEButton(dp);   // dp is already the sprite origin centre
     }
 
-    // Vending [E] prompt
+    // Vending E-button prompt — centred on the vending sprite
     if (nearVending && !vendingUI.isOpen() && playerPtr) {
         sf::Vector2f pc = getRectCenter(playerPtr->getBounds());
         sf::FloatRect vb = getClosestVendingBounds(pc);
-        if (vb.width > 0.f) {
-            sf::Vector2f vc = getRectCenter(vb);
-            interactText.setPosition(vc.x - 10.f, vb.top - 16.f);
-            window.draw(interactText);
-        }
+        if (vb.width > 0.f)
+            drawEButton({vb.left + vb.width / 2.f, vb.top + vb.height / 2.f});
     }
 
     // Held item label

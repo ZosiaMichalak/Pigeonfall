@@ -22,11 +22,14 @@ struct SaveData {
     // Run state
     int   roomIndex     = 0;
     int   coins         = 0;
+    float playTime      = 0.f;   // total play time in seconds
+    bool  roomCleared   = false; // whether current room was already cleared
     std::string heldItem;
 
     // Options
     bool  fullscreen    = false;
     int   musicVolume   = 100;
+    int   sfxVolume     = 70;
 };
 
 class SaveSystem {

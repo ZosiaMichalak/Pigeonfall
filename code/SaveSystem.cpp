@@ -4,7 +4,7 @@
 #include <cstdio>
 
 static constexpr uint32_t MAGIC   = 0xB2EAD0C5u;
-static constexpr uint32_t VERSION = 2u;
+static constexpr uint32_t VERSION = 4u;
 
 std::string SaveSystem::slotPath(int slot) {
     return "save" + std::to_string(slot) + ".dat";
@@ -34,6 +34,8 @@ bool SaveSystem::save(const SaveData& data, int slot) {
     write(&data.totemCharges,      sizeof(data.totemCharges));
     write(&data.roomIndex,         sizeof(data.roomIndex));
     write(&data.coins,             sizeof(data.coins));
+    write(&data.playTime,          sizeof(data.playTime));
+    write(&data.roomCleared,       sizeof(data.roomCleared));
 
     uint32_t heldLen = static_cast<uint32_t>(data.heldItem.size());
     write(&heldLen, sizeof(heldLen));
@@ -41,6 +43,7 @@ bool SaveSystem::save(const SaveData& data, int slot) {
 
     write(&data.fullscreen,   sizeof(data.fullscreen));
     write(&data.musicVolume,  sizeof(data.musicVolume));
+    write(&data.sfxVolume,    sizeof(data.sfxVolume));
 
     std::cout << "[SaveSystem] Saved to slot " << slot << " (" << path << ")\n";
     return true;
@@ -74,6 +77,8 @@ SaveData SaveSystem::load(int slot) {
     read(&out.totemCharges,     sizeof(out.totemCharges));
     read(&out.roomIndex,        sizeof(out.roomIndex));
     read(&out.coins,            sizeof(out.coins));
+    read(&out.playTime,         sizeof(out.playTime));
+    read(&out.roomCleared,      sizeof(out.roomCleared));
 
     uint32_t heldLen = 0;
     read(&heldLen, sizeof(heldLen));
@@ -84,6 +89,7 @@ SaveData SaveSystem::load(int slot) {
 
     read(&out.fullscreen,  sizeof(out.fullscreen));
     read(&out.musicVolume, sizeof(out.musicVolume));
+    read(&out.sfxVolume,   sizeof(out.sfxVolume));
 
     if (f.good()) {
         out.exists = true;

@@ -48,6 +48,7 @@ private:
         int     level     = 0;
         int     roomIndex = 0;
         int     coins     = 0;
+        float   playTime  = 0.f;
     };
     std::array<SlotInfo, SAVE_SLOT_COUNT> slots_;
 

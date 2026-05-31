@@ -37,7 +37,8 @@ private:
     sf::Texture texLoading;   // wind-up
     sf::Texture texDash;
 
-    DashEnemyState prevSheetState = DashEnemyState::RECOVER; // forces first switch
+    DashEnemyState prevSheetState  = DashEnemyState::RECOVER; // forces first switch
+    bool           dashJustStarted = false;
 
     void setSheet(DashEnemyState s);
 
@@ -47,7 +48,8 @@ public:
     void updateAI(float dt, sf::Vector2f playerPos,
                   std::vector<std::unique_ptr<GameObject>>& spawnQueue) override;
 
-    bool isDashingNow() const { return dashState == DashEnemyState::DASH; }
+    bool isDashingNow()    const { return dashState == DashEnemyState::DASH; }
+    bool justStartedDash() const { return dashJustStarted; }
 };
 
 #endif

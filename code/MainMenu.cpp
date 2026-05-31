@@ -16,10 +16,10 @@ static inline float rnd() {
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
-MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int startMusicVolume)
+MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int startMusicVolume, int startSfxVolume)
     : font(font), screen(MenuScreen::MAIN),
       hasSave(hasSave), mainSel(0),
-      optFullscreen(startFullscreen), optMusicVolume(startMusicVolume),
+      optFullscreen(startFullscreen), optMusicVolume(startMusicVolume), optSfxVolume(startSfxVolume),
       optSel(0), optChanged(false),
       titleTimer(0.f), globalTimer(0.f),
       particleSpawnTimer(0.f), selGlow(0.f)
@@ -35,7 +35,7 @@ void MainMenu::buildMainItems() {
     mainItems.clear();
     mainItems.push_back("New Game");
     if (hasSave) {
-        mainItems.push_back("Load Game");
+        mainItems.push_back("Continue");
     }
     mainItems.push_back("Options");
     mainItems.push_back("Quit");
@@ -110,21 +110,24 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
 
     if (screen == MenuScreen::OPTIONS) {
         if (key == sf::Keyboard::W || key == sf::Keyboard::Up)
-            optSel = (optSel - 1 + 3) % 3;
+            optSel = (optSel - 1 + 4) % 4;
         if (key == sf::Keyboard::S || key == sf::Keyboard::Down)
-            optSel = (optSel + 1) % 3;
+            optSel = (optSel + 1) % 4;
 
         if (key == sf::Keyboard::E || key == sf::Keyboard::Return ||
             key == sf::Keyboard::Space) {
             if (optSel == 0) { optFullscreen = !optFullscreen; optChanged = true; }
-            else if (optSel == 2) { screen = MenuScreen::MAIN; }
+            else if (optSel == 3) { screen = MenuScreen::MAIN; }
         }
-        // Left/Right adjust music volume on row 1
+        // Left/Right adjust volumes on rows 1 and 2
+        auto clamp10 = [](int v, int d) { return std::max(0, std::min(100, v + d * 10)); };
         if (optSel == 1) {
-            if (key == sf::Keyboard::Left  || key == sf::Keyboard::A)
-                optMusicVolume = std::max(0,   optMusicVolume - 10);
-            if (key == sf::Keyboard::Right || key == sf::Keyboard::D)
-                optMusicVolume = std::min(100, optMusicVolume + 10);
+            if (key == sf::Keyboard::Left  || key == sf::Keyboard::A) optMusicVolume = clamp10(optMusicVolume, -1);
+            if (key == sf::Keyboard::Right || key == sf::Keyboard::D) optMusicVolume = clamp10(optMusicVolume, +1);
+        }
+        if (optSel == 2) {
+            if (key == sf::Keyboard::Left  || key == sf::Keyboard::A) optSfxVolume = clamp10(optSfxVolume, -1);
+            if (key == sf::Keyboard::Right || key == sf::Keyboard::D) optSfxVolume = clamp10(optSfxVolume, +1);
         }
         if (key == sf::Keyboard::Q) screen = MenuScreen::MAIN;
         return MenuAction::NONE;
@@ -139,7 +142,7 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
     if (key == sf::Keyboard::E) {
         const std::string& s = mainItems[mainSel];
         if (s == "New Game")  return MenuAction::NEW_GAME;
-        if (s == "Load Game") return MenuAction::LOAD_GAME;
+        if (s == "Continue")  return MenuAction::LOAD_GAME;
         if (s == "Options")   { screen = MenuScreen::OPTIONS; optSel = 0; }
         if (s == "Quit")      return MenuAction::QUIT;
     }
@@ -506,7 +509,7 @@ void MainMenu::render(sf::RenderWindow& window) {
         for (int i = 0; i < static_cast<int>(mainItems.size()); ++i) {
             float iy  = PY + 10.f + i * ITEM_H;
             bool  sel = (i == mainSel);
-            bool  dim = (mainItems[i] == "Load Game" && !hasSave);
+            bool  dim = (mainItems[i] == "Continue" && !hasSave);
             drawMenuItem(window, mainItems[i], i, sel, PX, iy, PW, dim);
         }
 
@@ -562,8 +565,9 @@ void MainMenu::render(sf::RenderWindow& window) {
         struct Row { std::string label, value; int idx; };
         Row rows[] = {
             { "Fullscreen",    optFullscreen ? "ON" : "OFF",         0 },
-            { "Music",         std::to_string(optMusicVolume) + "%", 1 },
-            { "Back",          "",                                    2 },
+            { "Music Vol",     std::to_string(optMusicVolume) + "%", 1 },
+            { "SFX Vol",       std::to_string(optSfxVolume)  + "%", 2 },
+            { "Back",          "",                                    3 },
         };
 
         for (auto& row : rows) {

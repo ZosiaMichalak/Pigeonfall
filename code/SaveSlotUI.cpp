@@ -1,5 +1,6 @@
 #include "SaveSlotUI.h"
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 static constexpr float VIEW_W = 400.f;
@@ -20,6 +21,7 @@ void SaveSlotUI::refresh() {
             slots_[i].level     = sd.level;
             slots_[i].roomIndex = sd.roomIndex;
             slots_[i].coins     = sd.coins;
+            slots_[i].playTime  = sd.playTime;
         } else {
             slots_[i] = {};
         }
@@ -178,9 +180,20 @@ void SaveSlotUI::drawSlotCard(sf::RenderWindow& w,
                            sf::Color(160, 155, 200), cx + 8.f, cy + 38.f);
     w.draw(roomT);
 
-    auto coinT = makeText(std::to_string(s.coins) + " c", 16,
-                           sf::Color(255, 210, 50), cx + 8.f, cy + 52.f);
-    w.draw(coinT);
+    // Format play time as h:mm:ss
+    {
+        int totalSec = static_cast<int>(s.playTime);
+        int h  = totalSec / 3600;
+        int m  = (totalSec % 3600) / 60;
+        int sc = totalSec % 60;
+        char timeBuf[16];
+        if (h > 0)
+            std::snprintf(timeBuf, sizeof(timeBuf), "%d:%02d:%02d", h, m, sc);
+        else
+            std::snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", m, sc);
+        auto timeT = makeText(timeBuf, 16, sf::Color(150, 210, 150), cx + 8.f, cy + 52.f);
+        w.draw(timeT);
+    }
 
     // Action hint at bottom
     std::string hintStr = (mode_ == SlotUIMode::LOAD) ? "E  load" : "E  overwrite";
@@ -214,13 +227,8 @@ void SaveSlotUI::render(sf::RenderWindow& window) {
     const float PY = px((VIEW_H - PH) / 2.f);
     drawPanel(window, PX, PY, PW, PH, sf::Color(8, 8, 18), sf::Color(70, 50, 130));
 
-    // Title
-    std::string titleStr;
-    switch (mode_) {
-        case SlotUIMode::SAVE:     titleStr = "SAVE GAME";  break;
-        case SlotUIMode::LOAD:     titleStr = "LOAD GAME";  break;
-        case SlotUIMode::NEW_GAME: titleStr = "NEW GAME — CHOOSE SLOT"; break;
-    }
+    // Title — always "Choose slot" regardless of mode
+    std::string titleStr = "Choose slot";
     sf::Text title(titleStr, font_, 16);
     title.setFillColor(sf::Color(170, 130, 255));
     title.setPosition(
@@ -262,12 +270,15 @@ void SaveSlotUI::render(sf::RenderWindow& window) {
             px(DY + 8.f));
         window.draw(q);
 
-        // Yes / No buttons
+        // Yes / No buttons — centred inside the popup
         struct Btn { const char* label; sf::Color col; };
         Btn btns[2] = { {"YES", sf::Color(220,60,60)}, {"NO", sf::Color(140,140,140)} };
+        const float BTN_W   = 60.f;
+        const float BTN_GAP = 12.f;
+        const float BTN_TOTAL = 2 * BTN_W + BTN_GAP;
         for (int i = 0; i < 2; ++i) {
             bool sel = (confirmSel_ == i);
-            float bx = DX + 30.f + i * 90.f;
+            float bx = px(DX + (DW - BTN_TOTAL) / 2.f + i * (BTN_W + BTN_GAP));
             float by = DY + 32.f;
             sf::RectangleShape btn({60.f, 16.f});
             btn.setFillColor(sel ? sf::Color(40, 20, 20) : sf::Color(20, 14, 14));
@@ -279,8 +290,8 @@ void SaveSlotUI::render(sf::RenderWindow& window) {
             sf::Text bLabel(btns[i].label, font_, 16);
             bLabel.setFillColor(sel ? btns[i].col : sf::Color(90, 80, 80));
             bLabel.setPosition(
-                px(bx + (60.f - bLabel.getLocalBounds().width) / 2.f),
-                px(by));
+                px(bx + (BTN_W - bLabel.getLocalBounds().width) / 2.f),
+                px(by - 8.f + (16.f - bLabel.getLocalBounds().height) / 2.f - 1.f));
             window.draw(bLabel);
         }
     }

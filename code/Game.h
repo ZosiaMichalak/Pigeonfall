@@ -23,6 +23,7 @@
 #include "HelperCompanion.h"
 #include "AnnoyingDog.h"
 #include "PigeonKing.h"
+#include "SoundManager.h"
 
 // SLOT_SELECT is shown after NEW_GAME or LOAD_GAME is chosen from the main menu
 enum class AppState { MENU, SLOT_SELECT, PLAYING, DYING, GAME_OVER };
@@ -79,9 +80,21 @@ private:
 
     // ── Music ─────────────────────────────────────────────────────────────────
     sf::Music music;
-    int       musicVolume = 100;  // 0-100
+    int       musicVolume = 100;
+
+    // ── Play time tracking ────────────────────────────────────────────────────
+    float playTime = 0.f;   // total seconds played on this save slot
 
     void applyMusicVolume();
+    void applySFXVolume();
+
+    SoundManager soundMgr;
+    int   sfxVolume  = 70;
+    float stepsTimer = 0.f;
+
+    // ── Pause sub-menu (OPTIONS) ──────────────────────────────────────────────
+    bool pauseInOptions = false;
+    int  pauseOptSel    = 0;
 
     bool isPaused;
     int  pauseSel;
@@ -116,6 +129,18 @@ private:
     void loadSpawnTextures();
     void updateSpawnEffects(float dt);
     void drawSpawnEffects();
+
+    // ── E-button interact prompt ──────────────────────────────────────────────
+    sf::Texture eButtonTexture;
+    sf::Sprite  eButtonSprite;
+    bool        eButtonLoaded  = false;
+    float       eButtonFrame   = 0.f;    // 0 or 1
+    float       eButtonAnim    = 0.f;    // counts up, flips at 0.5s
+    float       eButtonAlpha   = 0.f;    // 0-255, smooth fade in/out
+    bool        eButtonVisible = false;
+
+    void loadEButton();
+    void drawEButton(sf::Vector2f pos);
 
     // ── Floating damage numbers ───────────────────────────────────────────────
     struct DamageNumber {

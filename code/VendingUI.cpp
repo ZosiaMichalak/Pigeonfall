@@ -97,15 +97,6 @@ void VendingUI::render(sf::RenderWindow& window, int totalCoins, const std::stri
         px(panelY + 6.f));
     window.draw(coinLabel);
 
-    // Held item
-    if (!heldItem.empty()) {
-        sf::Text held("Holding: " + heldItem, font, 16);
-        held.setScale(0.75f, 0.75f);
-        held.setFillColor(sf::Color(180, 180, 100));
-        held.setPosition(px(panelX + 6.f), px(panelY + 6.f));
-        window.draw(held);
-    }
-
     // Item cards
     const float CARD_H  = 38.f;
     const float CARD_W  = pw - 10.f;

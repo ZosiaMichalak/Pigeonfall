@@ -156,11 +156,13 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     case DashEnemyState::WIND_UP: {
         setSheet(DashEnemyState::WIND_UP);
 
+        dashJustStarted = false;
         windUpTimer -= dt;
         position += dashDirection * 15.f * dt;
         if (windUpTimer <= 0.f) {
-            dashState = DashEnemyState::DASH;
-            dashTimer = dashDuration;
+            dashState       = DashEnemyState::DASH;
+            dashTimer       = dashDuration;
+            dashJustStarted = true;
         }
         break;
     }
@@ -168,6 +170,7 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     case DashEnemyState::DASH: {
         setSheet(DashEnemyState::DASH);
 
+        if (dashTimer < dashDuration) dashJustStarted = false;  // clear after first frame
         position += dashDirection * dashSpeed * dt;
         dashTimer -= dt;
         if (dashTimer <= 0.f) {
