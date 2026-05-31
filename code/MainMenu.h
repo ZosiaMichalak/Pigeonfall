@@ -39,7 +39,7 @@ struct BgNode {
 
 class MainMenu {
 public:
-    MainMenu(sf::Font& font, bool hasSave, bool startFullscreen);
+    MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int startMusicVolume = 100);
 
     // Feed every polled event here.  Returns the chosen action (or NONE).
     MenuAction handleEvent(const sf::Event& event);
@@ -48,7 +48,8 @@ public:
     void render(sf::RenderWindow& window);
 
     // Expose options so Game can read them.
-    bool fullscreen() const { return optFullscreen; }
+    bool fullscreen()   const { return optFullscreen; }
+    int  musicVolume()  const { return optMusicVolume; }
 
 private:
     sf::Font& font;
@@ -61,6 +62,7 @@ private:
 
     // ── Options screen ────────────────────────────────────────────────────────
     bool optFullscreen;
+    int  optMusicVolume; // 0-100 in steps of 10
     int  optSel;
     bool optChanged;
 

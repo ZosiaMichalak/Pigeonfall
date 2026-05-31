@@ -69,12 +69,9 @@ namespace RoomTemplates {
 
 std::vector<RoomTemplate> getAll() {
     return {
-        // ── Index 0: Starter Room (no enemies, player starts center) ──────────
-                // ── MyRoom ──
-                // ── MyRoom ──
-                // ── MyRoom ──
+
         {
-            "MyRoom", 3,
+            "StarterRoom", 3,
             {
             {PropDef::Type::VENDING, {175.5f, 35.9f}},
             {PropDef::Type::TRASH, {149.0f, 53.9f}},
@@ -88,41 +85,41 @@ std::vector<RoomTemplate> getAll() {
             {195.1f, 122.6f}
         },
 
-
-
-
-        // ── Index 1 ───────────────────────────────────────────────────────────
         {
-            "Street 1", 0,
+            "1", 0,
             {
-                {PropDef::Type::FLOWERS,  {224.f,  24.f}},
-                {PropDef::Type::FLOWERS,  {264.f,  24.f}},
-                {PropDef::Type::HYDRANT,  {136.f, 107.f}},
-                {PropDef::Type::CAR1,     {218.f, 104.f}},
-                {PropDef::Type::CAR2,     {219.f, 135.f}},
-                {PropDef::Type::BENCH,    { 35.f,  22.f}},
-                {PropDef::Type::TRASH,    { 66.f,  22.f}},
-                {PropDef::Type::VENDING,  {357.f,   4.f}},
-            },
-            {191.f, 2.f}, 90.f,
-            { 30.f, 110.f}          // player start (enter from left side)
+            {PropDef::Type::CAR1, {80.0f, 8.0f}},
+            {PropDef::Type::CAR2, {0.0f, 8.0f}},
+            {PropDef::Type::FLOWERS, {224.0f, 160.0f}},
+            {PropDef::Type::FLOWERS, {280.0f, 160.0f}},
+            {PropDef::Type::FLOWERS, {336.0f, 160.0f}},
+            {PropDef::Type::VENDING, {0.0f, 136.0f}},
+            {PropDef::Type::HYDRANT, {376.0f, 0.0f}},
+        },
+            {384.0f, 88.0f}, 90.0f,
+            {192.0f, 96.0f}
         },
 
-        // ── Index 2 ───────────────────────────────────────────────────────────
+                // ── 2 ──
         {
-            "Street 2", 1,
+            "2", 1,
             {
-                {PropDef::Type::BENCH,    {186.f,  24.f}},
-                {PropDef::Type::CAR1,     {329.f,   1.f}},
-                {PropDef::Type::HYDRANT,  {163.f,  33.f}},
-                {PropDef::Type::CAR3,     {329.f, 179.f}},
-                {PropDef::Type::CAR2,     {327.f,  81.f}},
-            },
-            {191.f, 191.f}, 90.f,
-            { 30.f, 110.f}
+            {PropDef::Type::BENCH, {256.0f, 40.0f}},
+            {PropDef::Type::BENCH, {344.0f, 40.0f}},
+            {PropDef::Type::BENCH, {344.0f, 112.0f}},
+            {PropDef::Type::BENCH, {256.0f, 112.0f}},
+            {PropDef::Type::TRASH, {304.0f, 112.0f}},
+            {PropDef::Type::TRASH, {304.0f, 40.0f}},
+            {PropDef::Type::VENDING, {9.5f, 3.6f}},
         },
-    };
-}
+            {190.2f, 180.9f}, 270.0f,
+            {188.2f, 90.5f}
+        }
+
+
+    };      
+};
+
 
 RoomTemplate getRandom() {
     static std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));

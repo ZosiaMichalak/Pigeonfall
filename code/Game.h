@@ -2,6 +2,7 @@
 #define GAME_H
 
 #include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
 #include <vector>
 #include <memory>
 #include <random>
@@ -17,12 +18,14 @@
 #include "SkillTreeUI.h"
 #include "VendingUI.h"
 #include "MainMenu.h"
+#include "SaveSlotUI.h"
 #include "Coin.h"
 #include "HelperCompanion.h"
 #include "AnnoyingDog.h"
 #include "PigeonKing.h"
 
-enum class AppState { MENU, PLAYING, DYING, GAME_OVER };
+// SLOT_SELECT is shown after NEW_GAME or LOAD_GAME is chosen from the main menu
+enum class AppState { MENU, SLOT_SELECT, PLAYING, DYING, GAME_OVER };
 
 class Game {
 private:
@@ -33,6 +36,12 @@ private:
     // ── App state ─────────────────────────────────────────────────────────────
     AppState                  appState;
     std::unique_ptr<MainMenu> mainMenu;
+    SaveSlotUI                slotUI;
+
+    // Which slot we are currently playing on (-1 = not set)
+    int activeSlot = 0;
+    // Remembers which menu action triggered the slot picker
+    MenuAction pendingMenuAction = MenuAction::NONE;
 
     std::vector<std::unique_ptr<GameObject>> objects;
     std::vector<std::unique_ptr<Room>> rooms;
@@ -41,7 +50,7 @@ private:
 
     std::mt19937 rng;
 
-    sf::RectangleShape doorShape;   // kept for collision bounds only (invisible)
+    sf::RectangleShape doorShape;
     sf::Texture        doorTexture;
     sf::Sprite         doorSprite;
     sf::Text           interactText;
@@ -63,22 +72,28 @@ private:
     int totalCoins;
 
     // ── Held item ─────────────────────────────────────────────────────────────
-    std::string heldItem;   // empty = nothing held
+    std::string heldItem;
 
     // ── Vending proximity ─────────────────────────────────────────────────────
-    bool nearVending;       // true when player is within interaction range
+    bool nearVending;
+
+    // ── Music ─────────────────────────────────────────────────────────────────
+    sf::Music music;
+    int       musicVolume = 100;  // 0-100
+
+    void applyMusicVolume();
 
     bool isPaused;
     int  pauseSel;
 
-    bool isBossRoom = false;   // true when room 4 boss fight is active
+    bool isBossRoom = false;
 
     // ── Death fade & game-over screen ─────────────────────────────────────────
-    float fadeTimer;          // counts up during DYING state
+    float fadeTimer;
     static constexpr float FADE_DURATION = 1.2f;
-    int   gameOverSel;        // always 0 for now (only "Reborn")
-    float gameOverTimer;      // drives animations on game-over screen
-    std::unique_ptr<MainMenu> gameOverMenu; // allocated once on GAME_OVER entry
+    int   gameOverSel;
+    float gameOverTimer;
+    std::unique_ptr<MainMenu> gameOverMenu;
 
     // ── Spawn effects ─────────────────────────────────────────────────────────
     struct SpawnEffect {
@@ -86,7 +101,7 @@ private:
         float        timer;
         bool         isDash;
         int          tier;
-        std::unique_ptr<GameObject> pendingObject; // set for boss-spawned enemies
+        std::unique_ptr<GameObject> pendingObject;
         bool         isBossSpawn = false;
         static constexpr float SPAWN_ANIM_DUR      = 0.4f;
         static constexpr float BOSS_SPAWN_ANIM_DUR = 0.3f;
@@ -94,7 +109,6 @@ private:
     };
     std::vector<SpawnEffect> pendingSpawns;
 
-    // Loaded once; shared across all spawn effects
     sf::Texture spawnTexBullet;
     sf::Texture spawnTexDash;
     bool        spawnTexLoaded = false;
@@ -107,7 +121,7 @@ private:
     struct DamageNumber {
         sf::Text     text;
         sf::Vector2f velocity;
-        float        lifetime;   // seconds remaining
+        float        lifetime;
         float        maxLifetime;
     };
     std::vector<DamageNumber> damageNumbers;
@@ -127,15 +141,16 @@ private:
 
     void drawPauseMenu();
     void drawGameOver();
-    void saveGame();
-    void loadGame();
 
-    // Returns the closest vending-machine bounds in the current room, or an
-    // empty rect if none exist.  Uses Room's prop list via getPropColliders()
-    // — we store vending positions separately for proximity checks.
+    // Slot-aware save / load
+    void saveGame(int slot);
+    void loadGame(int slot);
+
+    // Legacy no-arg wrappers (use activeSlot)
+    void saveGame() { saveGame(activeSlot); }
+    void loadGame() { loadGame(activeSlot); }
+
     sf::FloatRect getClosestVendingBounds(sf::Vector2f playerCenter) const;
-
-
 
 public:
     Game();

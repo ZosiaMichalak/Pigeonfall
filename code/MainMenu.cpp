@@ -16,10 +16,11 @@ static inline float rnd() {
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
-MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen)
+MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int startMusicVolume)
     : font(font), screen(MenuScreen::MAIN),
       hasSave(hasSave), mainSel(0),
-      optFullscreen(startFullscreen), optSel(0), optChanged(false),
+      optFullscreen(startFullscreen), optMusicVolume(startMusicVolume),
+      optSel(0), optChanged(false),
       titleTimer(0.f), globalTimer(0.f),
       particleSpawnTimer(0.f), selGlow(0.f)
 {
@@ -109,13 +110,21 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
 
     if (screen == MenuScreen::OPTIONS) {
         if (key == sf::Keyboard::W || key == sf::Keyboard::Up)
-            optSel = (optSel + 1) % 2;
+            optSel = (optSel - 1 + 3) % 3;
         if (key == sf::Keyboard::S || key == sf::Keyboard::Down)
-            optSel = (optSel + 1) % 2;
+            optSel = (optSel + 1) % 3;
 
-        if (key == sf::Keyboard::E) {
+        if (key == sf::Keyboard::E || key == sf::Keyboard::Return ||
+            key == sf::Keyboard::Space) {
             if (optSel == 0) { optFullscreen = !optFullscreen; optChanged = true; }
-            else             { screen = MenuScreen::MAIN; }
+            else if (optSel == 2) { screen = MenuScreen::MAIN; }
+        }
+        // Left/Right adjust music volume on row 1
+        if (optSel == 1) {
+            if (key == sf::Keyboard::Left  || key == sf::Keyboard::A)
+                optMusicVolume = std::max(0,   optMusicVolume - 10);
+            if (key == sf::Keyboard::Right || key == sf::Keyboard::D)
+                optMusicVolume = std::min(100, optMusicVolume + 10);
         }
         if (key == sf::Keyboard::Q) screen = MenuScreen::MAIN;
         return MenuAction::NONE;
@@ -510,7 +519,7 @@ void MainMenu::render(sf::RenderWindow& window) {
     }
     else if (screen == MenuScreen::OPTIONS) {
         const float PW     = 200.f;
-        const float PH     = 72.f;
+        const float PH     = 90.f;
         const float PX     = rpx((VIEW_W - PW) * 0.5f);
         const float PY     = rpx(VIEW_H * 0.5f - PH * 0.5f + 14.f);
 
@@ -552,8 +561,9 @@ void MainMenu::render(sf::RenderWindow& window) {
         // Rows
         struct Row { std::string label, value; int idx; };
         Row rows[] = {
-            { "Fullscreen", optFullscreen ? "ON" : "OFF", 0 },
-            { "Back",       "",                            1 },
+            { "Fullscreen",    optFullscreen ? "ON" : "OFF",         0 },
+            { "Music",         std::to_string(optMusicVolume) + "%", 1 },
+            { "Back",          "",                                    2 },
         };
 
         for (auto& row : rows) {
@@ -604,7 +614,7 @@ void MainMenu::render(sf::RenderWindow& window) {
             }
         }
 
-        sf::Text hint = makeText("E=select  Q=back", 16,
+        sf::Text hint = makeText("E=select  </>/D volume  Q=back", 16,
                                  sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
         hint.setScale(0.65f, 0.65f);
         float hw = hint.getGlobalBounds().width;

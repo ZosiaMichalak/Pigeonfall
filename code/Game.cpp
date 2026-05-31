@@ -25,9 +25,16 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
     return { r.left + r.width / 2.f, r.top + r.height / 2.f };
 }
 
+// Returns true if ANY of the 3 save slots has data
+static bool anySlotExists() {
+    for (int i = 0; i < SAVE_SLOT_COUNT; ++i)
+        if (SaveSystem::hasSlot(i)) return true;
+    return false;
+}
+
 // ── Constructor ───────────────────────────────────────────────────────────────
 Game::Game()
-    : hud(font), skillTree(font), vendingUI(font),
+    : hud(font), skillTree(font), vendingUI(font), slotUI(font),
       totalCoins(50), nearVending(false),
       isPaused(false), pauseSel(0),
       fadeTimer(0.f), gameOverSel(0), gameOverTimer(0.f)
@@ -39,6 +46,8 @@ Game::Game()
     wasMPressed   = false;
     enemiesRemainingToSpawn = 0;
     currentRoomIndex = 0;
+    activeSlot = 0;
+    pendingMenuAction = MenuAction::NONE;
 
     std::srand(static_cast<unsigned>(std::time(nullptr)));
     rng.seed(static_cast<unsigned>(std::time(nullptr)));
@@ -62,7 +71,16 @@ Game::Game()
 
     // ── Main menu ─────────────────────────────────────────────────────────────
     appState = AppState::MENU;
-    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+
+    // ── Music ─────────────────────────────────────────────────────────────────
+    if (music.openFromFile("music/Track12.wav")) {
+        music.setLoop(true);
+        music.setVolume(static_cast<float>(musicVolume));
+        music.play();
+    } else {
+        std::cerr << "[Warning] Track12.wav not found — no music.\n";
+    }
 
     interactText.setFont(font);
     interactText.setCharacterSize(18);
@@ -70,7 +88,6 @@ Game::Game()
     interactText.setString("[E]");
 
     // Door — sprite is 50x80, two 50x40 frames stacked vertically (locked | open)
-    // Rendered at 2x scale = 100x80 game-world px, no rotation applied
     doorShape.setSize(sf::Vector2f(100.f, 80.f));
     doorShape.setOrigin(50.f, 40.f);
     doorShape.setFillColor(sf::Color::Transparent);
@@ -137,15 +154,17 @@ void Game::refreshFontTextures() {
         const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
 }
 
+void Game::applyMusicVolume() {
+    music.setVolume(static_cast<float>(musicVolume));
+}
+
 // ── Vending proximity helper ──────────────────────────────────────────────────
 sf::FloatRect Game::getClosestVendingBounds(sf::Vector2f playerCenter) const {
     sf::FloatRect best{};
     float bestDist = 1e9f;
 
     for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
-        // Vending machines are taller than other props (height >= 45 game-px)
         if (col.height < 45.f) continue;
-
         sf::Vector2f centre = getRectCenter(col);
         float dx = centre.x - playerCenter.x;
         float dy = centre.y - playerCenter.y;
@@ -163,12 +182,10 @@ void Game::spawnDamageNumber(sf::Vector2f pos, int damage, bool isBig) {
     dn.text.setCharacterSize(16);
 
     if (isBig) {
-        // x3 combo hit — large yellow
         dn.text.setFillColor(sf::Color(255, 220, 0));
         dn.text.setScale(1.1f, 1.1f);
         dn.maxLifetime = 0.75f;
     } else {
-        // Normal hit — small white
         dn.text.setFillColor(sf::Color(255, 255, 255));
         dn.text.setScale(0.6f, 0.6f);
         dn.maxLifetime = 0.5f;
@@ -176,7 +193,6 @@ void Game::spawnDamageNumber(sf::Vector2f pos, int damage, bool isBig) {
 
     dn.text.setPosition(pos.x - dn.text.getLocalBounds().width * dn.text.getScale().x / 2.f,
                         pos.y - 8.f);
-    // Float upward with slight random horizontal drift
     std::uniform_real_distribution<float> drift(-15.f, 15.f);
     dn.velocity  = { drift(rng), -40.f };
     dn.lifetime  = dn.maxLifetime;
@@ -187,7 +203,6 @@ void Game::updateDamageNumbers(float dt) {
     for (auto& dn : damageNumbers) {
         dn.lifetime -= dt;
         dn.text.move(dn.velocity * dt);
-        // Fade out in the last third of lifetime
         float alpha = std::min(1.f, dn.lifetime / (dn.maxLifetime * 0.4f));
         sf::Color c = dn.text.getFillColor();
         c.a = static_cast<sf::Uint8>(255 * std::max(0.f, alpha));
@@ -204,13 +219,11 @@ void Game::drawDamageNumbers() {
         window.draw(dn.text);
 }
 
-
 void Game::spawnEnemy() {
     std::uniform_real_distribution<float> xDis(50.f, 350.f);
     std::uniform_real_distribution<float> yDis(30.f, 160.f);
     float ex = xDis(rng), ey = yDis(rng);
 
-    // Keep spawn away from the player
     if (!objects.empty()) {
         if (auto* p = dynamic_cast<Player*>(objects[0].get())) {
             sf::Vector2f pp = getRectCenter(p->getBounds());
@@ -241,12 +254,10 @@ void Game::updateSpawnEffects(float dt) {
         it->timer += dt;
         if (it->timer >= it->duration()) {
             if (it->pendingObject) {
-                // Boss-spawned pre-built enemy — clear spawn immunity then add
                 if (auto* e = dynamic_cast<Enemy*>(it->pendingObject.get()))
                     e->setSpawning(false);
                 objects.push_back(std::move(it->pendingObject));
             } else {
-                // Regular trickle spawn — build the enemy now
                 if (it->isDash)
                     objects.push_back(std::make_unique<DashEnemy>(it->pos.x, it->pos.y, it->tier));
                 else
@@ -269,17 +280,16 @@ void Game::loadSpawnTextures() {
 }
 
 void Game::drawSpawnEffects() {
-    static constexpr int   FW         = 51;
-    static constexpr int   FH         = 32;
-    static constexpr int   COLS       = 2;
-    static constexpr int   FRAMES     = 8;
-    static constexpr float ANIM_DUR   = SpawnEffect::SPAWN_ANIM_DUR;
+    static constexpr int   FW     = 51;
+    static constexpr int   FH     = 32;
+    static constexpr int   COLS   = 2;
+    static constexpr int   FRAMES = 8;
 
     for (const auto& sp : pendingSpawns) {
         sf::Texture& tex = sp.isDash ? spawnTexDash : spawnTexBullet;
         if (tex.getSize().x == 0) continue;
 
-        float t     = sp.timer / sp.duration();      // 0 → 1
+        float t     = sp.timer / sp.duration();
         int   frame = static_cast<int>(t * FRAMES);
         if (frame >= FRAMES) frame = FRAMES - 1;
 
@@ -298,14 +308,12 @@ void Game::drawSpawnEffects() {
 void Game::nextRoom() {
     currentRoomIndex++;
 
-    // Build or reuse room
     if (currentRoomIndex >= static_cast<int>(rooms.size())) {
         RoomTemplate tmpl = RoomTemplates::getRandom();
         rooms.push_back(std::make_unique<Room>(currentRoomIndex, tmpl));
         rooms.back()->loadAssets();
     }
 
-    // Move player to the new room's designated start position
     sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
 
     std::vector<std::unique_ptr<GameObject>> newObjects;
@@ -319,35 +327,30 @@ void Game::nextRoom() {
     }
     objects = std::move(newObjects);
 
-    // ── Progressive enemy count ───────────────────────────────────────────────
-    // Room 1: 2 enemies total, grows by ~1 every 2 rooms, capped at 12
     int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
     enemiesRemainingToSpawn = totalEnemies;
 
-    // ── Boss room 4 ───────────────────────────────────────────────────────────
     isBossRoom = (currentRoomIndex == 4);
     if (isBossRoom) {
-        enemiesRemainingToSpawn = 0;  // no trickle-spawns
+        enemiesRemainingToSpawn = 0;
 
-        // Replace the randomly-generated room with a clean B1 arena (no props)
         RoomTemplate bossTemplate;
-        bossTemplate.name        = "Boss Arena";
-        bossTemplate.background  = 0;          // B1.png
-        bossTemplate.props       = {};          // no props — boss ignores collisions anyway
+        bossTemplate.name         = "Boss Arena";
+        bossTemplate.background   = 0;
+        bossTemplate.props        = {};
         bossTemplate.doorPosition = {400.f, 100.f};
         bossTemplate.doorRotation = 90.f;
         bossTemplate.playerStart  = {50.f, 110.f};
-        rooms[currentRoomIndex]  = std::make_unique<Room>(currentRoomIndex, bossTemplate);
+        rooms[currentRoomIndex]   = std::make_unique<Room>(currentRoomIndex, bossTemplate);
         rooms[currentRoomIndex]->loadAssets();
 
-        // Re-place player at boss arena start
         if (auto* p = dynamic_cast<Player*>(objects[0].get()))
             p->setPosition(bossTemplate.playerStart);
 
         objects.push_back(std::make_unique<PigeonKing>(200.f, 60.f));
     }
 
-    vendingUI.rollItems();   // re-roll shop stock for the new room
+    vendingUI.rollItems();
     vendingUI.close();
     nearVending = false;
     pendingSpawns.clear();
@@ -361,7 +364,7 @@ void Game::resetRun() {
     auto starterTmpl = RoomTemplates::getAll()[0];
     rooms.push_back(std::make_unique<Room>(0, starterTmpl));
     rooms[0]->loadAssets();
-    rooms[0]->setCleared(true);   // starter room is pre-cleared
+    rooms[0]->setCleared(true);
 
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
@@ -371,8 +374,6 @@ void Game::resetRun() {
     vendingUI.close();
     nearVending  = false;
 
-    // Clear all latched key states so a held key at death doesn't fire
-    // immediately in the new run (e.g. E triggering nextRoom on frame 1).
     wasEPressed   = false;
     wasFPressed   = false;
     wasMPressed   = false;
@@ -381,17 +382,16 @@ void Game::resetRun() {
     objects.push_back(std::make_unique<Player>(
         starterTmpl.playerStart.x, starterTmpl.playerStart.y));
 
-    vendingUI.rollItems();   // randomise shop stock for the first room
+    vendingUI.rollItems();
 }
 
-// ── Save / Load ───────────────────────────────────────────────────────────────
-void Game::saveGame() {
+// ── Save / Load (slot-aware) ──────────────────────────────────────────────────
+void Game::saveGame(int slot) {
     Player* playerPtr = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
     if (!playerPtr) return;
 
     SaveData sd;
-    sd.exists = true;
-
+    sd.exists           = true;
     sd.level            = playerPtr->getLevel();
     sd.xp               = playerPtr->getXP();
     sd.xpToNext         = playerPtr->getXPToNext();
@@ -406,13 +406,13 @@ void Game::saveGame() {
     sd.coins       = totalCoins;
     sd.heldItem    = heldItem;
     sd.fullscreen  = isFullscreen;
-    sd.musicVolume = 100;
+    sd.musicVolume = musicVolume;
 
-    SaveSystem::save(sd);
+    SaveSystem::save(sd, slot);
 }
 
-void Game::loadGame() {
-    SaveData sd = SaveSystem::load();
+void Game::loadGame(int slot) {
+    SaveData sd = SaveSystem::load(slot);
     if (!sd.exists) return;
 
     resetRun();
@@ -421,11 +421,12 @@ void Game::loadGame() {
             p->applyLoadedSave(sd);
     }
     isFullscreen = sd.fullscreen;
+    musicVolume  = sd.musicVolume;
     applyWindowMode();
-    heldItem    = sd.heldItem;
-    totalCoins  = sd.coins;
+    applyMusicVolume();
+    heldItem   = sd.heldItem;
+    totalCoins = sd.coins;
 
-    // Replay room transitions silently to restore room index
     currentRoomIndex = 0;
     for (int i = 0; i < sd.roomIndex; ++i) nextRoom();
 }
@@ -479,7 +480,7 @@ void Game::run() {
                         event.key.code == sf::Keyboard::Up   ||
                         event.key.code == sf::Keyboard::S    ||
                         event.key.code == sf::Keyboard::Down)
-                        gameOverSel = 1 - gameOverSel; // toggle between 0 and 1
+                        gameOverSel = 1 - gameOverSel;
 
                     if (event.key.code == sf::Keyboard::E ||
                         event.key.code == sf::Keyboard::Return ||
@@ -489,7 +490,7 @@ void Game::run() {
                             appState = AppState::PLAYING;
                         } else {
                             resetRun();
-                            mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                            mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
                             appState = AppState::MENU;
                         }
                         gameOverMenu.reset();
@@ -498,8 +499,38 @@ void Game::run() {
                 continue;
             }
 
-            // ── Dying state — eat all input ────────────────────────────────────
+            // ── Dying state — eat all input ───────────────────────────────────
             if (appState == AppState::DYING) continue;
+
+            // ── Slot select state ─────────────────────────────────────────────
+            if (appState == AppState::SLOT_SELECT) {
+                // F11 still works here
+                if (event.type == sf::Event::KeyPressed &&
+                    event.key.code == sf::Keyboard::F11 && !wasF11Pressed) {
+                    wasF11Pressed = true;
+                    isFullscreen = !isFullscreen;
+                    applyWindowMode();
+                }
+                if (event.type == sf::Event::KeyReleased &&
+                    event.key.code == sf::Keyboard::F11)
+                    wasF11Pressed = false;
+
+                SlotUIResult result = slotUI.handleEvent(event);
+                if (result == SlotUIResult::SELECTED) {
+                    activeSlot = slotUI.getSelectedSlot();
+                    if (pendingMenuAction == MenuAction::LOAD_GAME) {
+                        loadGame(activeSlot);
+                    } else {
+                        // NEW_GAME: wipe any existing save in that slot and start fresh
+                        SaveSystem::deleteSlot(activeSlot);
+                        resetRun();
+                    }
+                    appState = AppState::PLAYING;
+                } else if (result == SlotUIResult::CANCELLED) {
+                    appState = AppState::MENU;
+                }
+                continue;
+            }
 
             // ── Menu state ────────────────────────────────────────────────────
             if (appState == AppState::MENU) {
@@ -508,7 +539,7 @@ void Game::run() {
                     wasF11Pressed = true;
                     isFullscreen = !isFullscreen;
                     applyWindowMode();
-                    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
                 }
                 if (event.type == sf::Event::KeyReleased &&
                     event.key.code == sf::Keyboard::F11)
@@ -516,12 +547,14 @@ void Game::run() {
 
                 MenuAction action = mainMenu->handleEvent(event);
                 if (action == MenuAction::NEW_GAME) {
-                    resetRun();
-                    appState = AppState::PLAYING;
+                    pendingMenuAction = MenuAction::NEW_GAME;
+                    slotUI.open(SlotUIMode::NEW_GAME);
+                    appState = AppState::SLOT_SELECT;
                 }
                 else if (action == MenuAction::LOAD_GAME) {
-                    loadGame();
-                    appState = AppState::PLAYING;
+                    pendingMenuAction = MenuAction::LOAD_GAME;
+                    slotUI.open(SlotUIMode::LOAD);
+                    appState = AppState::SLOT_SELECT;
                 }
                 else if (action == MenuAction::QUIT) {
                     window.close();
@@ -530,7 +563,11 @@ void Game::run() {
                 if (mainMenu->fullscreen() != isFullscreen) {
                     isFullscreen = mainMenu->fullscreen();
                     applyWindowMode();
-                    mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                    mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
+                }
+                if (mainMenu->musicVolume() != musicVolume) {
+                    musicVolume = mainMenu->musicVolume();
+                    applyMusicVolume();
                 }
                 continue;
             }
@@ -550,10 +587,16 @@ void Game::run() {
                         if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
                             pauseSel = (pauseSel + 1) % 3;
                         if (event.key.code == sf::Keyboard::E) {
-                            if      (pauseSel == 0) { saveGame(); isPaused = false; }
+                            if (pauseSel == 0) {
+                                // Show slot UI in SAVE mode
+                                pendingMenuAction = MenuAction::NEW_GAME; // reuse as "save intent"
+                                slotUI.open(SlotUIMode::SAVE);
+                                appState = AppState::SLOT_SELECT;
+                                isPaused = false;
+                            }
                             else if (pauseSel == 1) { isFullscreen = !isFullscreen; applyWindowMode(); }
                             else if (pauseSel == 2) {
-                                mainMenu = std::make_unique<MainMenu>(font, SaveSystem::hasSave(), isFullscreen);
+                                mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume);
                                 appState = AppState::MENU;
                                 isPaused = false;
                             }
@@ -581,7 +624,7 @@ void Game::run() {
                             if (!bought.empty()) {
                                 Player* p0 = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
                                 if (bought == "Totem" && p0 && p0->hasTotemThisRun()) {
-                                    totalCoins += 100; // refund — already bought this run
+                                    totalCoins += 100;
                                 } else {
                                     heldItem = bought;
                                     if (p0) p0->setHeldItem(heldItem);
@@ -605,7 +648,7 @@ void Game::run() {
                         }
                         if (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Tab) {
                             skillTree.close();
-                            wasMPressed = true; // prevent polling from re-opening this frame
+                            wasMPressed = true;
                         }
                     }
                 }
@@ -622,21 +665,26 @@ void Game::run() {
             window.clear(sf::Color::Black);
             mainMenu->render(window);
             window.display();
+        } else if (appState == AppState::SLOT_SELECT) {
+            // Draw the menu background then overlay the slot picker
+            window.clear(sf::Color::Black);
+            mainMenu->render(window);
+            slotUI.render(window);
+            window.display();
         } else if (appState == AppState::DYING) {
-            // Advance fade; still render the game world underneath
             fadeTimer += dt;
-            render();   // draws game world + black overlay with increasing alpha
+            render();
             if (fadeTimer >= FADE_DURATION) {
                 appState      = AppState::GAME_OVER;
                 gameOverTimer = 0.f;
                 gameOverSel   = 0;
-                // Create once here — never recreated until next death
                 gameOverMenu  = std::make_unique<MainMenu>(font, false, isFullscreen);
             }
         } else if (appState == AppState::GAME_OVER) {
             gameOverTimer += dt;
             drawGameOver();
         } else {
+            // Handle SLOT_SELECT result when coming from pause menu save
             update(dt);
             render();
         }
@@ -652,7 +700,6 @@ void Game::update(float dt) {
 
     if (playerPtr && playerPtr->isDeadNow()) {
         if (!playerPtr->consumeSecondChance()) {
-            // Start the death fade instead of resetting immediately
             appState  = AppState::DYING;
             fadeTimer = 0.f;
             return;
@@ -671,11 +718,11 @@ void Game::update(float dt) {
         sf::FloatRect pb = playerPtr->getBounds();
         sf::Vector2f  pc = {pb.left + pb.width / 2.f, pb.top + pb.height / 2.f};
 
-        if (heldItem == "Monster Energy") { playerPtr->applyMonsterBuff(); heldItem = ""; playerPtr->setHeldItem(""); }
-        else if (heldItem == "Pizza")     { playerPtr->healFull();          heldItem = ""; playerPtr->setHeldItem(""); }
-        else if (heldItem == "Duo")       { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
-        else if (heldItem == "Annoying Dog") { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
-        else if (heldItem == "Totem")     { playerPtr->addTotemCharge();    heldItem = ""; playerPtr->setHeldItem(""); }
+        if      (heldItem == "Monster Energy") { playerPtr->applyMonsterBuff(); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Pizza")          { playerPtr->healFull();          heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Duo")            { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Annoying Dog")   { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Totem")          { playerPtr->addTotemCharge();    heldItem = ""; playerPtr->setHeldItem(""); }
     }
     wasFPressed = fNow;
 
@@ -701,17 +748,17 @@ void Game::update(float dt) {
                 sf::FloatRect pb = playerPtr->getBounds();
                 for (auto& z : pk->getWaveZones()) {
                     if (!z.active || z.done) {
-                        z.dmgTimer = 0.f;  // reset when zone not active
+                        z.dmgTimer = 0.f;
                         continue;
                     }
                     if (z.rect.intersects(pb)) {
                         z.dmgTimer += dt;
                         if (z.dmgTimer >= 0.5f) {
                             playerPtr->takeDamage(1);
-                            z.dmgTimer = 0.f;  // reset so next 0.5s tick gives another hit
+                            z.dmgTimer = 0.f;
                         }
                     } else {
-                        z.dmgTimer = 0.f;  // left the zone, reset timer
+                        z.dmgTimer = 0.f;
                     }
                 }
                 break;
@@ -769,7 +816,6 @@ void Game::update(float dt) {
         }
     }
 
-
     // ── AnnoyingDog vs prop collision ─────────────────────────────────────────
     for (auto& obj2 : objects) {
         auto* dog = dynamic_cast<AnnoyingDog*>(obj2.get());
@@ -791,6 +837,7 @@ void Game::update(float dt) {
             db = dog->getBounds();
         }
     }
+
     // In boss room: route enemy spawns through pendingSpawns (0.3s anim, capped at 7)
     for (auto& o : spawnQueue) {
         Enemy* asEnemy = dynamic_cast<Enemy*>(o.get());
@@ -799,8 +846,7 @@ void Game::update(float dt) {
             int cur = 0;
             for (auto& ex : objects) if (dynamic_cast<Enemy*>(ex.get()) && !dynamic_cast<PigeonKing*>(ex.get()) && ex->isActive()) cur++;
             cur += static_cast<int>(pendingSpawns.size());
-            if (cur >= 7) continue; // at cap — discard
-            // Mark spawning so it is immune while the effect plays
+            if (cur >= 7) continue;
             asEnemy->setSpawning(true);
             sf::FloatRect eb = asEnemy->getBounds();
             sf::Vector2f  ep = { eb.left + eb.width/2.f, eb.top + eb.height/2.f };
@@ -850,23 +896,19 @@ void Game::update(float dt) {
 
             if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
                 if (playerPtr->getSwordBounds().intersects(enemy->getBounds())) {
-                    // PigeonKing: phase 1 always hittable, phase 2 only during VULNERABLE
                     if (auto* pk = dynamic_cast<PigeonKing*>(enemy))
                         if (!pk->isVulnerable()) continue;
-                    bool wasAlive = enemy->isActive();
-                    bool alreadyHit = playerPtr->hasHitThisSwing();
-                    int dmg = playerPtr->isMonsterOneHit()
-                        ? 9999
-                        : playerPtr->registerHit();
+                    bool wasAlive    = enemy->isActive();
+                    bool alreadyHit  = playerPtr->hasHitThisSwing();
+                    int  dmg         = playerPtr->isMonsterOneHit()
+                        ? 9999 : playerPtr->registerHit();
                     enemy->takeDamage(dmg);
-                    // Spawn floating number only on the first frame of contact
                     if (!alreadyHit) {
                         sf::Vector2f epos = getRectCenter(enemy->getBounds());
                         bool bigHit = (!playerPtr->isMonsterOneHit() && playerPtr->getComboCount() == 3);
                         spawnDamageNumber(epos, std::min(dmg, 999), bigHit);
                     }
                     if (wasAlive && !enemy->isActive()) {
-                        // Clear any lingering wave zones when boss dies
                         if (auto* pk = dynamic_cast<PigeonKing*>(enemy))
                             pk->getWaveZones().clear();
 
@@ -922,11 +964,10 @@ void Game::update(float dt) {
                 for (auto& ob : objects) {
                     if (auto* e = dynamic_cast<Enemy*>(ob.get())) {
                         if (e->isActive() && e->getBounds().intersects(bullet->getBounds())) {
-                            // PigeonKing: phase 1 always hittable, phase 2 only during VULNERABLE
                             if (auto* pk = dynamic_cast<PigeonKing*>(e))
                                 if (!pk->isVulnerable()) continue;
                             bool wasAlive = e->isActive();
-                            int dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
+                            int  dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
                             e->takeDamage(dmg);
                             if (wasAlive && !e->isActive()) {
                                 int xpR = dynamic_cast<PigeonKing*>(e) ? 20
@@ -966,7 +1007,7 @@ void Game::update(float dt) {
             }
         }
 
-        // Player vs enemy contact — push apart; contact damage is ticked separately below
+        // Player vs enemy contact
         if (auto* enemy = dynamic_cast<Enemy*>(objA.get())) {
             if (playerPtr && playerPtr->isActive()) {
                 sf::FloatRect playerBounds = playerPtr->getBounds();
@@ -981,7 +1022,6 @@ void Game::update(float dt) {
                             skipPush = true;
                         }
                     }
-                    // PigeonKing body contact does nothing — damage only via bullets
                     if (dynamic_cast<PigeonKing*>(enemy))
                         skipPush = true;
 
@@ -1032,15 +1072,11 @@ void Game::update(float dt) {
         objects.end());
 
     // ── Wave spawning ─────────────────────────────────────────────────────────
-    // Count living enemies; when the wave is wiped, spawn the next wave.
-    // Starter room (index 0) is always pre-cleared, so this never fires there.
     int alive = 0;
     for (auto& o : objects) if (dynamic_cast<Enemy*>(o.get()) && o->isActive()) alive++;
-    // Pending spawns count as alive so the room never clears prematurely
     int totalActive = alive + static_cast<int>(pendingSpawns.size());
 
     if (!isBossRoom && totalActive == 0 && enemiesRemainingToSpawn > 0) {
-        // Wave size: 1-3 early, grows to 1-5 later
         int minW = 1;
         int maxW = std::min(2 + currentRoomIndex / 3, 5);
         std::uniform_int_distribution<int> wsd(minW, maxW);
@@ -1049,7 +1085,6 @@ void Game::update(float dt) {
         totalActive += wc;
     }
 
-    // Boss room clears when PigeonKing is gone and no minions remain
     bool bossGone = true;
     if (isBossRoom) { for (auto& o : objects) if (dynamic_cast<PigeonKing*>(o.get()) && o->isActive()) { bossGone = false; break; } }
     bool cleared = isBossRoom
@@ -1106,16 +1141,13 @@ void Game::render() {
         doorShape.setPosition(dp);
         doorShape.setRotation(0.f);
 
-        // Frame 0 = top (locked), frame 1 = bottom (cleared/open)
         int frameY = cleared ? 40 : 0;
         doorSprite.setTextureRect(sf::IntRect(0, frameY, 50, 40));
         doorSprite.setPosition(dp);
-        // Template rotation 0 = left or right border → rotate sprite based on side
-        // Template rotation 90 = top/bottom border → no rotation
-        float tmplRot = rooms[currentRoomIndex]->getDoorRotation();
+        float tmplRot  = rooms[currentRoomIndex]->getDoorRotation();
         float spriteRot = 0.f;
         if (tmplRot == 0.f) {
-            spriteRot = (dp.x > 200.f) ? 90.f : 270.f;  // right border = 90, left = 270
+            spriteRot = (dp.x > 200.f) ? 90.f : 270.f;
         }
         doorSprite.setRotation(spriteRot);
         window.draw(doorSprite);
@@ -1188,7 +1220,7 @@ void Game::render() {
     // ── Death fade overlay ────────────────────────────────────────────────────
     if (appState == AppState::DYING) {
         float t = std::min(1.f, fadeTimer / FADE_DURATION);
-        sf::Uint8 alpha = static_cast<sf::Uint8>(t * t * 255.f); // ease-in
+        sf::Uint8 alpha = static_cast<sf::Uint8>(t * t * 255.f);
         sf::RectangleShape fadeRect({VIEW_W, VIEW_H});
         fadeRect.setFillColor(sf::Color(0, 0, 0, alpha));
         window.draw(fadeRect);
@@ -1198,33 +1230,26 @@ void Game::render() {
 }
 
 // ── Game Over screen ──────────────────────────────────────────────────────────
-// Uses the same visual style as MainMenu (bg nodes, particles, scanlines).
-// We borrow MainMenu's render machinery by creating a temporary one.
 void Game::drawGameOver() {
-    if (!gameOverMenu) return;  // safety — should always exist here
+    if (!gameOverMenu) return;
 
     window.clear(sf::Color::Black);
-
-    // Render the animated MainMenu background (advances its own internal timers)
     gameOverMenu->render(window);
 
-    // ── Overdraw the panel with our custom "GAME OVER" content ───────────────
     static constexpr float VIEW_W = 400.f;
     static constexpr float VIEW_H = 225.f;
     static constexpr float PI     = 3.14159265f;
 
-    auto rpx = [](float v){ return std::floor(v + 0.5f); };
+    auto rpx  = [](float v){ return std::floor(v + 0.5f); };
     auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
 
     float selGlow = std::sin(gameOverTimer * 3.5f) * 0.5f + 0.5f;
 
-    // Panel — tall enough for title + 2 items
     const float PW = 160.f;
     const float PH = 88.f;
     const float PX = rpx((VIEW_W - PW) * 0.5f);
     const float PY = rpx(VIEW_H * 0.5f - PH * 0.5f + 14.f);
 
-    // Outer glow
     {
         float g = 3.f;
         sf::RectangleShape glow({PW + g*2.f, PH + g*2.f});
@@ -1249,13 +1274,11 @@ void Game::drawGameOver() {
     panel.setPosition(rpx(PX), rpx(PY));
     window.draw(panel);
 
-    // Inner top highlight
     sf::RectangleShape topLine({PW - 4.f, 1.f});
     topLine.setFillColor(sf::Color(90, 60, 140, 40));
     topLine.setPosition(rpx(PX + 2.f), rpx(PY + 1.f));
     window.draw(topLine);
 
-    // Corner dots
     for (int cx = 0; cx < 2; ++cx) for (int cy = 0; cy < 2; ++cy) {
         float cr = 2.2f;
         sf::CircleShape cd(cr); cd.setOrigin(cr, cr);
@@ -1267,7 +1290,6 @@ void Game::drawGameOver() {
         window.draw(cd);
     }
 
-    // "GAME OVER" title — pulsing red-purple
     float tp = std::sin(gameOverTimer * 1.4f) * 0.5f + 0.5f;
     sf::Text goTitle("GAME OVER", font, 16);
     goTitle.setFillColor(sf::Color(
@@ -1278,13 +1300,11 @@ void Game::drawGameOver() {
     goTitle.setPosition(rpx(PX + PW * 0.5f - gtw * 0.5f), rpx(PY + 8.f));
     window.draw(goTitle);
 
-    // Thin line under title
     float lineW = 100.f;
     sf::RectangleShape titleLine({lineW, 1.f});
     titleLine.setFillColor(sf::Color(120, 40, 80, 120));
     titleLine.setPosition(rpx(PX + PW * 0.5f - lineW * 0.5f), rpx(PY + 26.f));
     window.draw(titleLine);
-    // Dots at ends of line
     for (int side = 0; side < 2; ++side) {
         float dr = 1.8f;
         sf::CircleShape d(dr); d.setOrigin(dr, dr);
@@ -1293,7 +1313,6 @@ void Game::drawGameOver() {
         window.draw(d);
     }
 
-    // ── Menu items ────────────────────────────────────────────────────────────
     const float ITEM_H = 20.f;
     const char* labels[] = { "Reborn", "Main Menu" };
     for (int i = 0; i < 2; ++i) {
@@ -1301,7 +1320,6 @@ void Game::drawGameOver() {
         bool  sel = (gameOverSel == i);
         float sg  = sel ? selGlow : 0.f;
 
-        // Highlight bar (only for selected)
         if (sel) {
             sf::RectangleShape hl({PW - 6.f, ITEM_H - 2.f});
             hl.setFillColor(sf::Color(
@@ -1316,7 +1334,6 @@ void Game::drawGameOver() {
             hl.setPosition(rpx(PX + 3.f), rpx(iy));
             window.draw(hl);
 
-            // Node dot
             float dotR = 2.5f;
             sf::CircleShape dot(dotR); dot.setOrigin(dotR, dotR);
             dot.setPosition(rpx(PX + 3.f + dotR), rpx(iy + ITEM_H * 0.5f - 1.f));
@@ -1325,7 +1342,6 @@ void Game::drawGameOver() {
                 static_cast<sf::Uint8>(lerp(180.f, 255.f, sg))));
             window.draw(dot);
 
-            // Short connector line from dot into text
             sf::Vector2f a{rpx(PX + 3.f + dotR*2.f), rpx(iy + ITEM_H*0.5f - 1.f)};
             sf::Vector2f b{rpx(PX + 16.f),            rpx(iy + ITEM_H*0.5f - 1.f)};
             sf::Vector2f d2 = b - a;
@@ -1341,7 +1357,6 @@ void Game::drawGameOver() {
             }
         }
 
-        // Label text
         sf::Text itemText(labels[i], font, 16);
         itemText.setFillColor(sel
             ? sf::Color(
@@ -1353,7 +1368,6 @@ void Game::drawGameOver() {
         window.draw(itemText);
     }
 
-    // Hint at bottom
     sf::Text hint("W/S  E=select", font, 16);
     hint.setScale(0.65f, 0.65f);
     hint.setFillColor(sf::Color(45, 35, 70));
