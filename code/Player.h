@@ -9,7 +9,7 @@
 // Deklaracja wyprzedzająca struktury SaveData
 struct SaveData;
 
-enum class AnimState { IDLE, WALK, DASH, ATTACK };
+enum class AnimState { IDLE, WALK, DASH, ATTACK, DIE };
 
 // ── Skill tree ────────────────────────────────────────────────────────────────
 struct SkillDef {
@@ -90,8 +90,10 @@ private:
     int   slashFrameHeight;
 
     // ── Combo tracking ────────────────────────────────────────────────────────
-    int   comboCount;            // 0..3 — how many hits in current combo
-    float comboWindowTimer;      // time left before combo resets
+    int   comboCount;            // 0..3 — enemy hits in current combo (damage)
+    int   comboSwingCount;       // 0..3 — consecutive swings (hits or air)
+    float comboWindowTimer;      // time left before combo chain resets
+    float comboLockoutTimer;     // 0.1s pause after 3 swings in a row
     bool  hitConnectedThisSwing; // true once per attack swing when an enemy is hit
 
     // Tekstury i sprite'y SFML
@@ -115,6 +117,7 @@ private:
     sf::Texture textureWalk;
     sf::Texture textureAttack;
     sf::Texture textureDash;
+    sf::Texture textureDie;
     sf::Texture slashTexture;
     sf::Sprite sprite;
     sf::Sprite slashSprite;
@@ -131,7 +134,12 @@ private:
     bool hasWalkTexture;
     bool hasAttackTexture;
     bool hasDashTexture;
+    bool hasDieTexture;
     bool hasSlashTexture;
+
+    float deathAnimTimer = 0.f;
+    int   dieMaxFrames   = 6;
+    static constexpr float DEATH_ANIM_DURATION = 2.f;
     
     int slashMaxFrames;
     int slashCols;
@@ -183,20 +191,27 @@ public:
     bool isSecondChanceUsed()    const { return persistentSecondChanceUsed; }
     int  getTotemCharges()       const { return persistentTotemCharges; }
     bool hasTotemThisRun()       const { return persistentTotemBoughtThisRun; }
+    void markTotemPurchased();
     void addTotemCharge();
 
     void  applyMonsterBuff();
+    void  assignRandomMonsterEnergyVariant();
+    int   getMonsterEnergyVariant() const { return monsterVariant; }
     void  setHeldItem(const std::string& item); // call whenever heldItem changes
     void  healFull();
     bool  hasMonsterBuff()       const { return monsterBuffTimer > 0.f; }
     
     bool isDeadNow() const { return isDead; }
+    void startDeathAnimation();
+    void updateDeathAnimation(float dt);
     bool isAttackingNow() const { return isAttacking; }
     bool isDashingNow() const { return isDashing; }
     bool isMonsterOneHit() const { return monsterOneHitKill; }
     void takeDamage(int amount);
     bool consumeSecondChance();
     static void resetRunStats();
+    // Clears XP, skills, and level — call before new game or when loading a save slot
+    static void resetProgression();
 };
 
 #endif // PLAYER_H

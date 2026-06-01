@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <ctime>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 
 static constexpr float VIEW_W   = 400.f;
@@ -32,6 +33,27 @@ static bool anySlotExists() {
     for (int i = 0; i < SAVE_SLOT_COUNT; ++i)
         if (SaveSystem::hasSlot(i)) return true;
     return false;
+}
+
+static void formatPlayTime(float seconds, char* buf, std::size_t bufSize) {
+    int totalSec = static_cast<int>(seconds);
+    int h  = totalSec / 3600;
+    int m  = (totalSec % 3600) / 60;
+    int sc = totalSec % 60;
+    if (h > 0)
+        std::snprintf(buf, bufSize, "%d:%02d:%02d", h, m, sc);
+    else
+        std::snprintf(buf, bufSize, "%d:%02d", m, sc);
+}
+
+static PigeonBossTier bossTierForRoom(int roomIndex) {
+    return roomIndex == 50 ? PigeonBossTier::STRONG : PigeonBossTier::WEAK;
+}
+
+static int scaledCoinDrop(int baseDrop) {
+    const auto& diff = ActiveDifficulty::settings;
+    int n = static_cast<int>(std::round(baseDrop * diff.coinDropMult));
+    return std::max(1, n);
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
@@ -104,16 +126,17 @@ Game::Game()
     }
 
     // Create the starter room and spawn the player at its playerStart position
-    auto starterTmpl = RoomTemplates::getAll()[0];
-    rooms.push_back(std::make_unique<Room>(0, starterTmpl));
+    rooms.push_back(std::make_unique<Room>(
+        0, RoomTemplates::getByIndex(0), 0));
     rooms[0]->loadAssets();
 
     // Starter room has no enemies and is immediately cleared
     rooms[0]->setCleared(true);
     enemiesRemainingToSpawn = 0;
 
+    const auto& startTmpl = RoomTemplates::getByIndex(0);
     objects.push_back(std::make_unique<Player>(
-        starterTmpl.playerStart.x, starterTmpl.playerStart.y));
+        startTmpl.playerStart.x, startTmpl.playerStart.y));
 }
 
 // ── Window management ─────────────────────────────────────────────────────────
@@ -338,15 +361,63 @@ void Game::drawSpawnEffects() {
     }
 }
 
+bool Game::isBossRoomIndex(int roomIndex) const {
+    return roomIndex == BOSS_ROOM_WEAK || roomIndex == BOSS_ROOM_STRONG;
+}
+
+int Game::enemiesForRoom(int roomIndex) const {
+    if (roomIndex <= 0 || isBossRoomIndex(roomIndex)) return 0;
+    const auto& diff = ActiveDifficulty::settings;
+    int base = std::min(3 + (roomIndex - 1), 14);
+    int count = static_cast<int>(std::round(base * diff.enemyCountMult));
+    return std::max(1, count);
+}
+
+void Game::drawScreenFadeOverlay(float elapsed, float fadeDelay, float fadeDuration) {
+    if (elapsed <= fadeDelay || fadeDuration <= 0.f) return;
+    float t = std::min(1.f, (elapsed - fadeDelay) / fadeDuration);
+    sf::Uint8 alpha = static_cast<sf::Uint8>(t * t * 255.f);
+    sf::RectangleShape fadeRect({VIEW_W, VIEW_H});
+    fadeRect.setFillColor(sf::Color(0, 0, 0, alpha));
+    window.draw(fadeRect);
+}
+
+void Game::buildRoomAt(int roomIndex, int layoutId) {
+    if (layoutId == RoomTemplates::BOSS_LAYOUT) {
+        RoomTemplate boss = RoomTemplates::getBossArena();
+        rooms.push_back(std::make_unique<Room>(roomIndex, boss, RoomTemplates::BOSS_LAYOUT));
+    } else {
+        int idx = layoutId;
+        if (idx < 0)
+            idx = RoomTemplates::getRandomIndex();
+        rooms.push_back(std::make_unique<Room>(
+            roomIndex, RoomTemplates::getByIndex(idx), idx));
+    }
+    rooms.back()->loadAssets();
+}
+
+void Game::configureBossRoom() {
+    enemiesRemainingToSpawn = 0;
+    isBossRoom = true;
+
+    RoomTemplate bossTemplate = RoomTemplates::getBossArena();
+    rooms[currentRoomIndex] = std::make_unique<Room>(
+        currentRoomIndex, bossTemplate, RoomTemplates::BOSS_LAYOUT);
+    rooms[currentRoomIndex]->loadAssets();
+
+    if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+        p->setPosition(bossTemplate.playerStart);
+
+    objects.push_back(std::make_unique<PigeonKing>(
+        200.f, 60.f, bossTierForRoom(currentRoomIndex)));
+}
+
 // ── Next room ─────────────────────────────────────────────────────────────────
 void Game::nextRoom() {
     currentRoomIndex++;
 
-    if (currentRoomIndex >= static_cast<int>(rooms.size())) {
-        RoomTemplate tmpl = RoomTemplates::getRandom();
-        rooms.push_back(std::make_unique<Room>(currentRoomIndex, tmpl));
-        rooms.back()->loadAssets();
-    }
+    if (currentRoomIndex >= static_cast<int>(rooms.size()))
+        buildRoomAt(currentRoomIndex, RoomTemplates::getRandomIndex());
 
     sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
 
@@ -361,42 +432,26 @@ void Game::nextRoom() {
     }
     objects = std::move(newObjects);
 
-    int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
-    enemiesRemainingToSpawn = totalEnemies;
+    isBossRoom = false;
+    enemiesRemainingToSpawn = enemiesForRoom(currentRoomIndex);
 
-    isBossRoom = (currentRoomIndex == 4);
-    if (isBossRoom) {
-        enemiesRemainingToSpawn = 0;
+    if (isBossRoomIndex(currentRoomIndex))
+        configureBossRoom();
 
-        RoomTemplate bossTemplate;
-        bossTemplate.name         = "Boss Arena";
-        bossTemplate.background   = 0;
-        bossTemplate.props        = {};
-        bossTemplate.doorPosition = {400.f, 100.f};
-        bossTemplate.doorRotation = 90.f;
-        bossTemplate.playerStart  = {50.f, 110.f};
-        rooms[currentRoomIndex]   = std::make_unique<Room>(currentRoomIndex, bossTemplate);
-        rooms[currentRoomIndex]->loadAssets();
-
-        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
-            p->setPosition(bossTemplate.playerStart);
-
-        objects.push_back(std::make_unique<PigeonKing>(200.f, 60.f));
-    }
-
-    vendingUI.rollItems();
-    vendingUI.close();
-    nearVending = false;
-    pendingSpawns.clear();
+    Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+    rollVendingForPlayer(p);
 }
 
 // ── Reset run ─────────────────────────────────────────────────────────────────
-void Game::resetRun() {
+void Game::resetRun(bool resetSessionTimer) {
     Player::resetRunStats();
 
+    pendingSpawns.clear();
+    damageNumbers.clear();
+
     rooms.clear();
-    auto starterTmpl = RoomTemplates::getAll()[0];
-    rooms.push_back(std::make_unique<Room>(0, starterTmpl));
+    rooms.push_back(std::make_unique<Room>(
+        0, RoomTemplates::getByIndex(0), 0));
     rooms[0]->loadAssets();
     rooms[0]->setCleared(true);
 
@@ -404,7 +459,10 @@ void Game::resetRun() {
     enemiesRemainingToSpawn = 0;
     isBossRoom              = false;
     totalCoins              = 50;
-    playTime                = 0.f;
+    if (resetSessionTimer) {
+        playTime   = 0.f;
+        deathCount = 0;
+    }
     heldItem                = "";
     skillTree.close();
     vendingUI.close();
@@ -415,10 +473,13 @@ void Game::resetRun() {
     wasMPressed   = false;
 
     objects.clear();
+    const auto& startTmpl = RoomTemplates::getByIndex(0);
     objects.push_back(std::make_unique<Player>(
-        starterTmpl.playerStart.x, starterTmpl.playerStart.y));
+        startTmpl.playerStart.x, startTmpl.playerStart.y));
 
-    vendingUI.rollItems();
+    Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+    rollVendingForPlayer(p);
+    lastMonsterBuffActive = false;
 }
 
 // ── Save / Load (slot-aware) ──────────────────────────────────────────────────
@@ -433,7 +494,8 @@ void Game::saveGame(int slot) {
     sd.xpToNext         = playerPtr->getXPToNext();
     sd.skillPoints      = playerPtr->getSkillPoints();
     sd.secondChanceUsed = playerPtr->isSecondChanceUsed();
-    sd.totemCharges     = playerPtr->getTotemCharges();
+    sd.totemCharges        = playerPtr->getTotemCharges();
+    sd.totemBoughtThisRun  = playerPtr->hasTotemThisRun();
 
     for (int i = 0; i < SAVE_SKILL_COUNT; ++i)
         sd.upgrades[i] = playerPtr->getUpgradeLevel(i);
@@ -442,6 +504,11 @@ void Game::saveGame(int slot) {
     sd.coins       = totalCoins;
     sd.playTime    = playTime;
     sd.roomCleared = rooms[currentRoomIndex]->getIsCleared();
+    sd.enemiesLeft = enemiesRemainingToSpawn;
+    sd.roomLayouts.clear();
+    sd.roomLayouts.reserve(rooms.size());
+    for (const auto& r : rooms)
+        sd.roomLayouts.push_back(r->getLayoutIndex());
     sd.heldItem    = heldItem;
     sd.fullscreen  = isFullscreen;
     sd.musicVolume = musicVolume;
@@ -453,9 +520,14 @@ void Game::saveGame(int slot) {
 
 void Game::loadGame(int slot) {
     SaveData sd = SaveSystem::load(slot);
-    if (!sd.exists) return;
+    if (!sd.exists) {
+        std::cerr << "[Game] Load failed for slot " << slot << " — using starter room.\n";
+        return;
+    }
 
+    activeSlot = slot;
     ActiveDifficulty::set(sd.difficulty);
+    Player::resetProgression();
     resetRun();
     if (!objects.empty()) {
         if (auto* p = dynamic_cast<Player*>(objects[0].get()))
@@ -477,57 +549,89 @@ void Game::loadGame(int slot) {
             p->setHeldItem(heldItem);
     }
 
-    // Jump directly to the saved room without fighting through intermediate ones
-    int targetRoom = sd.roomIndex;
-    if (targetRoom > 0) {
-        currentRoomIndex = targetRoom;
+    applyLoadedRoomState(sd);
+}
 
-        // Build rooms up to the target index if needed
-        while (static_cast<int>(rooms.size()) <= currentRoomIndex) {
-            RoomTemplate tmpl = RoomTemplates::getRandom();
-            rooms.push_back(std::make_unique<Room>(static_cast<int>(rooms.size()), tmpl));
-            rooms.back()->loadAssets();
-        }
+void Game::applyLoadedRoomState(const SaveData& sd) {
+    isBossRoom = false;
 
-        // Boss room override at index 4
-        isBossRoom = (currentRoomIndex == 4);
-        if (isBossRoom) {
-            RoomTemplate bossTemplate;
-            bossTemplate.name         = "Boss Arena";
-            bossTemplate.background   = 0;
-            bossTemplate.props        = {};
-            bossTemplate.doorPosition = {400.f, 100.f};
-            bossTemplate.doorRotation = 90.f;
-            bossTemplate.playerStart  = {50.f, 110.f};
-            rooms[currentRoomIndex]   = std::make_unique<Room>(currentRoomIndex, bossTemplate);
-            rooms[currentRoomIndex]->loadAssets();
-        }
+    int room = sd.roomIndex;
+    if (room < 0) room = 0;
 
-        // Place the player at this room's start position
-        sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
-        if (!objects.empty()) {
-            if (auto* p = dynamic_cast<Player*>(objects[0].get()))
-                p->setPosition(startPos);
-        }
-
-        // Set up enemies for this room (not yet spawned — same as nextRoom does)
-        int totalEnemies = std::min(2 + (currentRoomIndex - 1), 12);
-        enemiesRemainingToSpawn = isBossRoom ? 0 : totalEnemies;
-
-        // If the room was already cleared when saving, restore that state
-        if (sd.roomCleared) {
-            enemiesRemainingToSpawn = 0;
-            rooms[currentRoomIndex]->setCleared(true);
-        }
-
-        if (isBossRoom)
-            objects.push_back(std::make_unique<PigeonKing>(200.f, 60.f));
-
-        vendingUI.rollItems();
-        vendingUI.close();
-        nearVending = false;
-        pendingSpawns.clear();
+    rooms.clear();
+    for (int i = 0; i <= room; ++i) {
+        int layout = 0;
+        if (!sd.roomLayouts.empty() && i < static_cast<int>(sd.roomLayouts.size()))
+            layout = sd.roomLayouts[static_cast<size_t>(i)];
+        else if (i == 0)
+            layout = 0;
+        else
+            layout = RoomTemplates::getRandomIndex();
+        buildRoomAt(i, layout);
     }
+
+    currentRoomIndex = room;
+    isBossRoom = isBossRoomIndex(currentRoomIndex);
+
+    sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
+    if (!objects.empty()) {
+        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+            p->setPosition(startPos);
+    }
+
+    if (sd.roomCleared) {
+        enemiesRemainingToSpawn = 0;
+        rooms[currentRoomIndex]->setCleared(true);
+    } else {
+        rooms[currentRoomIndex]->setCleared(false);
+        if (isBossRoom) {
+            enemiesRemainingToSpawn = 0;
+        } else {
+            int fallback = enemiesForRoom(currentRoomIndex);
+            enemiesRemainingToSpawn = sd.enemiesLeft > 0 ? sd.enemiesLeft : fallback;
+            if (enemiesRemainingToSpawn <= 0)
+                enemiesRemainingToSpawn = fallback;
+        }
+    }
+
+    if (isBossRoom && !sd.roomCleared)
+        objects.push_back(std::make_unique<PigeonKing>(
+            200.f, 60.f, bossTierForRoom(currentRoomIndex)));
+
+    Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
+    rollVendingForPlayer(p);
+
+    if (!sd.roomCleared && !isBossRoom)
+        spawnPendingEnemiesAfterLoad();
+
+    lastMonsterBuffActive = p && p->hasMonsterBuff();
+    if (p && !heldItem.empty())
+        p->setHeldItem(heldItem);
+}
+
+void Game::rollVendingForPlayer(Player* player) {
+    vendingUI.rollItems(player && player->hasTotemThisRun());
+    vendingUI.close();
+    nearVending = false;
+    pendingSpawns.clear();
+}
+
+void Game::spawnPendingEnemiesAfterLoad() {
+    if (isBossRoom || enemiesRemainingToSpawn <= 0) return;
+
+    int minW = 1;
+    int maxW = std::min(2 + currentRoomIndex / 3, 5);
+    std::uniform_int_distribution<int> wsd(minW, maxW);
+    int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
+    for (int i = 0; i < wc; ++i) {
+        spawnEnemy();
+        enemiesRemainingToSpawn--;
+    }
+}
+
+void Game::syncHeldItemAfterMonsterBuff(Player* player) {
+    if (!player || heldItem.empty()) return;
+    player->setHeldItem(heldItem);
 }
 
 // ── Pause menu ────────────────────────────────────────────────────────────────
@@ -616,6 +720,32 @@ void Game::run() {
             if (event.type == sf::Event::Closed)  window.close();
             if (event.type == sf::Event::Resized) applyLetterboxView();
 
+            // ── Victory state ─────────────────────────────────────────────────
+            if (appState == AppState::VICTORY) {
+                if (event.type == sf::Event::KeyPressed) {
+                    if (event.key.code == sf::Keyboard::W ||
+                        event.key.code == sf::Keyboard::Up   ||
+                        event.key.code == sf::Keyboard::S    ||
+                        event.key.code == sf::Keyboard::Down)
+                        victorySel = 1 - victorySel;
+
+                    if (event.key.code == sf::Keyboard::E ||
+                        event.key.code == sf::Keyboard::Return ||
+                        event.key.code == sf::Keyboard::Space) {
+                        if (victorySel == 0) {
+                            ActiveDifficulty::set(ActiveDifficulty::current);
+                            resetRun();
+                            appState = AppState::PLAYING;
+                        } else {
+                            resetRun();
+                            mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
+                            appState = AppState::MENU;
+                        }
+                    }
+                }
+                continue;
+            }
+
             // ── Game-over state ───────────────────────────────────────────────
             if (appState == AppState::GAME_OVER) {
                 if (event.type == sf::Event::KeyPressed) {
@@ -630,7 +760,7 @@ void Game::run() {
                         event.key.code == sf::Keyboard::Space) {
                         if (gameOverSel == 0) {
                             ActiveDifficulty::set(ActiveDifficulty::current);
-                            resetRun();
+                            resetRun(false); // keep play time / death count for this save
                             appState = AppState::PLAYING;
                         } else {
                             resetRun();
@@ -668,7 +798,11 @@ void Game::run() {
                         // Wipe the chosen slot and start a fresh run
                         SaveSystem::deleteSlot(activeSlot);
                         ActiveDifficulty::set(slotUI.getChosenDifficulty());
+                        Player::resetProgression();
                         resetRun();
+                        pendingMenuAction = MenuAction::NONE;
+                        isPaused = false;
+                        pauseInOptions = false;
                     } else {
                         // SAVE from pause menu — just save to the chosen slot
                         saveGame(activeSlot);
@@ -795,11 +929,20 @@ void Game::run() {
                             std::string bought = vendingUI.tryBuy(totalCoins, heldItem);
                             if (!bought.empty()) {
                                 Player* p0 = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
-                                if (bought == "Totem" && p0 && p0->hasTotemThisRun()) {
-                                    totalCoins += 100;
+                                if (bought == "Totem") {
+                                    if (p0) {
+                                        p0->markTotemPurchased();
+                                        heldItem = bought;
+                                        p0->setHeldItem(heldItem);
+                                    }
+                                    rollVendingForPlayer(p0);
                                 } else {
                                     heldItem = bought;
-                                    if (p0) p0->setHeldItem(heldItem);
+                                    if (p0) {
+                                        if (bought == "Monster Energy")
+                                            p0->assignRandomMonsterEnergyVariant();
+                                        p0->setHeldItem(heldItem);
+                                    }
                                 }
                             }
                         }
@@ -845,16 +988,31 @@ void Game::run() {
             window.display();
         } else if (appState == AppState::DYING) {
             fadeTimer += dt;
+            if (!objects.empty()) {
+                if (auto* p = dynamic_cast<Player*>(objects[0].get()))
+                    p->updateDeathAnimation(dt);
+            }
             render();
-            if (fadeTimer >= FADE_DURATION) {
+            if (fadeTimer >= DEATH_ANIM_DURATION + DEATH_FADE_DURATION) {
                 appState      = AppState::GAME_OVER;
                 gameOverTimer = 0.f;
                 gameOverSel   = 0;
                 gameOverMenu  = std::make_unique<MainMenu>(font, false, isFullscreen, musicVolume, sfxVolume);
             }
+        } else if (appState == AppState::VICTORY_PENDING) {
+            fadeTimer += dt;
+            render();
+            if (fadeTimer >= VICTORY_FADE_DURATION) {
+                appState     = AppState::VICTORY;
+                victoryTimer = 0.f;
+                victorySel   = 0;
+            }
         } else if (appState == AppState::GAME_OVER) {
             gameOverTimer += dt;
             drawGameOver();
+        } else if (appState == AppState::VICTORY) {
+            victoryTimer += dt;
+            drawVictory();
         } else {
             // Handle SLOT_SELECT result when coming from pause menu save
             update(dt);
@@ -874,7 +1032,9 @@ void Game::update(float dt) {
         ? nullptr : dynamic_cast<Player*>(objects[0].get());
 
     if (playerPtr && playerPtr->isDeadNow()) {
+        ++deathCount;
         if (!playerPtr->consumeSecondChance()) {
+            playerPtr->startDeathAnimation();
             appState  = AppState::DYING;
             fadeTimer = 0.f;
             return;
@@ -882,6 +1042,13 @@ void Game::update(float dt) {
     }
 
     if (vendingUI.isOpen() || skillTree.isOpen()) return;
+
+    if (playerPtr) {
+        bool buffNow = playerPtr->hasMonsterBuff();
+        if (lastMonsterBuffActive && !buffNow)
+            syncHeldItemAfterMonsterBuff(playerPtr);
+        lastMonsterBuffActive = buffNow;
+    }
 
     bool mNow = sf::Keyboard::isKeyPressed(sf::Keyboard::Tab);
     if (mNow && !wasMPressed && !skillTree.isOpen()) skillTree.toggle();
@@ -897,7 +1064,11 @@ void Game::update(float dt) {
         else if (heldItem == "Pizza")          { playerPtr->healFull();          heldItem = ""; playerPtr->setHeldItem(""); }
         else if (heldItem == "Duo")            { objects.push_back(std::make_unique<HelperCompanion>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
         else if (heldItem == "Annoying Dog")   { objects.push_back(std::make_unique<AnnoyingDog>(pc.x, pc.y)); heldItem = ""; playerPtr->setHeldItem(""); }
-        else if (heldItem == "Totem")          { playerPtr->addTotemCharge();    heldItem = ""; playerPtr->setHeldItem(""); }
+        else if (heldItem == "Totem")          {
+            playerPtr->addTotemCharge();
+            heldItem = "";
+            playerPtr->setHeldItem("");
+        }
     }
     wasFPressed = fNow;
 
@@ -915,7 +1086,7 @@ void Game::update(float dt) {
             if (playerPtr)
                 enemy->updateAI(dt, getRectCenter(playerPtr->getBounds()), spawnQueue);
         if (auto* helper = dynamic_cast<HelperCompanion*>(obj.get()))
-            helper->tryHitEnemy(objects);
+            helper->tryHitEnemy(dt, objects, spawnQueue);
         if (auto* dog = dynamic_cast<AnnoyingDog*>(obj.get()))
             dog->tryExplode(objects, spawnQueue);
     }
@@ -959,10 +1130,12 @@ void Game::update(float dt) {
                         continue;
                     }
                     if (z.rect.intersects(pb)) {
-                        z.dmgTimer += dt;
-                        if (z.dmgTimer >= 0.5f) {
-                            playerPtr->takeDamage(1);
-                            z.dmgTimer = 0.f;
+                        if (!playerPtr->hasMonsterBuff()) {
+                            z.dmgTimer += dt;
+                            if (z.dmgTimer >= 0.35f) {
+                                playerPtr->takeDamage(1);
+                                z.dmgTimer = 0.f;
+                            }
                         }
                     } else {
                         z.dmgTimer = 0.f;
@@ -1113,8 +1286,9 @@ void Game::update(float dt) {
                     bool wasAlive    = enemy->isActive();
                     bool alreadyHit  = playerPtr->hasHitThisSwing();
                     bool enemyWasHit = enemy->getIsHit();
-                    int  dmg         = playerPtr->isMonsterOneHit()
-                        ? 9999 : playerPtr->registerHit();
+                    int  dmg = playerPtr->isMonsterOneHit()
+                        ? (enemy->isBoss() ? 20 : 9999)
+                        : playerPtr->registerHit();
                     enemy->takeDamage(dmg);
                     if (!enemyWasHit) soundMgr.play(SFX::HIT);
                     if (!alreadyHit) {
@@ -1131,8 +1305,9 @@ void Game::update(float dt) {
                         playerPtr->addXP(xpReward);
 
                         sf::Vector2f deathPos = getRectCenter(enemy->getBounds());
-                        int coinDrop = dynamic_cast<PigeonKing*>(enemy) ? 10
-                                     : dynamic_cast<DashEnemy*>(enemy)  ?  2 : 1;
+                        int coinDrop = scaledCoinDrop(
+                            dynamic_cast<PigeonKing*>(enemy) ? 10
+                            : dynamic_cast<DashEnemy*>(enemy)  ?  2 : 1);
                         static std::uniform_real_distribution<float> scatter(-8.f, 8.f);
                         auto findOpenCoinPos = [&](sf::Vector2f base) -> sf::Vector2f {
                             static const sf::Vector2f offsets[] = {
@@ -1183,7 +1358,8 @@ void Game::update(float dt) {
                             if (auto* pk = dynamic_cast<PigeonKing*>(e))
                                 if (!pk->isVulnerable()) continue;
                             bool wasAlive = e->isActive();
-                            int  dmg = (playerPtr && playerPtr->isMonsterOneHit()) ? 9999 : 1;
+                            int  dmg = (playerPtr && playerPtr->isMonsterOneHit())
+                                ? (e->isBoss() ? 20 : 9999) : 1;
                             bool eWasHit = e->getIsHit();
                             e->takeDamage(dmg);
                             if (!eWasHit) soundMgr.play(SFX::HIT);
@@ -1192,8 +1368,9 @@ void Game::update(float dt) {
                                         : dynamic_cast<DashEnemy*>(e)  ?  3 : 2;
                                 playerPtr->addXP(xpR);
                                 sf::Vector2f deathPos = getRectCenter(e->getBounds());
-                                int coinDrop = dynamic_cast<PigeonKing*>(e) ? 10
-                                             : dynamic_cast<DashEnemy*>(e)  ?  2 : 1;
+                                int coinDrop = scaledCoinDrop(
+                                    dynamic_cast<PigeonKing*>(e) ? 10
+                                    : dynamic_cast<DashEnemy*>(e)  ?  2 : 1);
                                 static std::uniform_real_distribution<float> scatter2(-8.f, 8.f);
                                 auto findOpenCoinPos2 = [&](sf::Vector2f base) -> sf::Vector2f {
                                     static const sf::Vector2f offsets[] = {
@@ -1286,6 +1463,11 @@ void Game::update(float dt) {
         }
     }
 
+    // Coins (and any other loot) spawned during combat land in the world here
+    for (auto& o : spawnQueue)
+        objects.push_back(std::move(o));
+    spawnQueue.clear();
+
     objects.erase(
         std::remove_if(objects.begin(), objects.end(),
             [](const std::unique_ptr<GameObject>& o){ return !o->isActive(); }),
@@ -1311,6 +1493,15 @@ void Game::update(float dt) {
         ? (bossGone && alive == 0 && pendingSpawns.empty())
         : (totalActive == 0 && enemiesRemainingToSpawn == 0);
     rooms[currentRoomIndex]->setCleared(cleared);
+
+    if (appState == AppState::PLAYING &&
+        currentRoomIndex == BOSS_ROOM_STRONG && isBossRoom && cleared) {
+        appState  = AppState::VICTORY_PENDING;
+        fadeTimer = 0.f;
+        isPaused  = false;
+        skillTree.close();
+        vendingUI.close();
+    }
 
     updateSpawnEffects(dt);
     updateDamageNumbers(dt);
@@ -1364,8 +1555,9 @@ void Game::update(float dt) {
         }
     }
 
-    // ── Door interaction ──────────────────────────────────────────────────────
-    if (!nearVending && rooms[currentRoomIndex]->getIsCleared() && playerPtr) {
+    // ── Door interaction (no exit after final boss — victory screen instead) ───
+    if (currentRoomIndex < BOSS_ROOM_STRONG &&
+        !nearVending && rooms[currentRoomIndex]->getIsCleared() && playerPtr) {
         doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
         if (playerPtr->getBounds().intersects(doorShape.getGlobalBounds())) {
             bool eNow = sf::Keyboard::isKeyPressed(sf::Keyboard::E);
@@ -1462,14 +1654,10 @@ void Game::render() {
     if (vendingUI.isOpen())  vendingUI.render(window, totalCoins, heldItem);
     if (isPaused)            drawPauseMenu();
 
-    // ── Death fade overlay ────────────────────────────────────────────────────
-    if (appState == AppState::DYING) {
-        float t = std::min(1.f, fadeTimer / FADE_DURATION);
-        sf::Uint8 alpha = static_cast<sf::Uint8>(t * t * 255.f);
-        sf::RectangleShape fadeRect({VIEW_W, VIEW_H});
-        fadeRect.setFillColor(sf::Color(0, 0, 0, alpha));
-        window.draw(fadeRect);
-    }
+    if (appState == AppState::DYING)
+        drawScreenFadeOverlay(fadeTimer, DEATH_ANIM_DURATION, DEATH_FADE_DURATION);
+    else if (appState == AppState::VICTORY_PENDING)
+        drawScreenFadeOverlay(fadeTimer, 0.f, VICTORY_FADE_DURATION);
 
     window.display();
 }
@@ -1616,6 +1804,101 @@ void Game::drawGameOver() {
     sf::Text hint("W/S  E=select", font, 16);
     hint.setScale(0.65f, 0.65f);
     hint.setFillColor(sf::Color(45, 35, 70));
+    float hw = hint.getGlobalBounds().width;
+    hint.setPosition(rpx((VIEW_W - hw) * 0.5f), rpx(VIEW_H - 14.f));
+    window.draw(hint);
+
+    window.display();
+}
+
+// ── Victory screen ────────────────────────────────────────────────────────────
+void Game::drawVictory() {
+    window.clear(sf::Color(8, 12, 20));
+
+    static constexpr float VIEW_W = 400.f;
+    static constexpr float VIEW_H = 225.f;
+
+    auto rpx  = [](float v){ return std::floor(v + 0.5f); };
+    auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
+
+    float pulse = std::sin(victoryTimer * 2.f) * 0.5f + 0.5f;
+    float selGlow = std::sin(victoryTimer * 3.5f) * 0.5f + 0.5f;
+
+    const float PW = 280.f;
+    const float PH = 130.f;
+    const float PX = rpx((VIEW_W - PW) * 0.5f);
+    const float PY = rpx(28.f);
+
+    sf::RectangleShape panel({PW, PH});
+    panel.setFillColor(sf::Color(12, 22, 18));
+    panel.setOutlineThickness(1.f);
+    panel.setOutlineColor(sf::Color(
+        static_cast<sf::Uint8>(lerp(40.f, 90.f, pulse)),
+        static_cast<sf::Uint8>(lerp(120.f, 200.f, pulse)),
+        static_cast<sf::Uint8>(lerp(60.f, 110.f, pulse))));
+    panel.setPosition(rpx(PX), rpx(PY));
+    window.draw(panel);
+
+    sf::Text winTitle("YOU WIN!", font, 16);
+    winTitle.setFillColor(sf::Color(
+        static_cast<sf::Uint8>(lerp(120.f, 220.f, pulse)),
+        static_cast<sf::Uint8>(lerp(230.f, 255.f, pulse)),
+        static_cast<sf::Uint8>(lerp(140.f, 200.f, pulse))));
+    float tw = winTitle.getLocalBounds().width;
+    winTitle.setPosition(rpx(PX + PW * 0.5f - tw * 0.5f), rpx(PY + 10.f));
+    window.draw(winTitle);
+
+    char timeBuf[16];
+    formatPlayTime(playTime, timeBuf, sizeof(timeBuf));
+
+    sf::Text timeLine("Time: " + std::string(timeBuf), font, 16);
+    timeLine.setScale(0.85f, 0.85f);
+    timeLine.setFillColor(sf::Color(150, 210, 150));
+    timeLine.setPosition(rpx(PX + 16.f), rpx(PY + 36.f));
+    window.draw(timeLine);
+
+    sf::Text deathsLine("Deaths: " + std::to_string(deathCount), font, 16);
+    deathsLine.setScale(0.85f, 0.85f);
+    deathsLine.setFillColor(sf::Color(200, 180, 140));
+    deathsLine.setPosition(rpx(PX + 16.f), rpx(PY + 52.f));
+    window.draw(deathsLine);
+
+    const float ITEM_H = 20.f;
+    const char* labels[] = { "New Run", "Main Menu" };
+    for (int i = 0; i < 2; ++i) {
+        float iy  = PY + 72.f + i * ITEM_H;
+        bool  sel = (victorySel == i);
+        float sg  = sel ? selGlow : 0.f;
+
+        if (sel) {
+            sf::RectangleShape hl({PW - 12.f, ITEM_H - 2.f});
+            hl.setFillColor(sf::Color(
+                static_cast<sf::Uint8>(lerp(20.f, 40.f, sg)),
+                static_cast<sf::Uint8>(lerp(45.f, 70.f, sg)),
+                static_cast<sf::Uint8>(lerp(30.f, 50.f, sg))));
+            hl.setOutlineThickness(1.f);
+            hl.setOutlineColor(sf::Color(
+                static_cast<sf::Uint8>(lerp(60.f, 120.f, sg)),
+                static_cast<sf::Uint8>(lerp(140.f, 200.f, sg)),
+                static_cast<sf::Uint8>(lerp(70.f, 120.f, sg))));
+            hl.setPosition(rpx(PX + 6.f), rpx(iy));
+            window.draw(hl);
+        }
+
+        sf::Text itemText(labels[i], font, 16);
+        itemText.setFillColor(sel
+            ? sf::Color(
+                static_cast<sf::Uint8>(lerp(180.f, 240.f, sg)),
+                static_cast<sf::Uint8>(lerp(230.f, 255.f, sg)),
+                static_cast<sf::Uint8>(lerp(180.f, 220.f, sg)))
+            : sf::Color(120, 150, 130));
+        itemText.setPosition(rpx(PX + 14.f), rpx(iy + 1.f));
+        window.draw(itemText);
+    }
+
+    sf::Text hint("W/S  E=select", font, 16);
+    hint.setScale(0.65f, 0.65f);
+    hint.setFillColor(sf::Color(50, 80, 60));
     float hw = hint.getGlobalBounds().width;
     hint.setPosition(rpx((VIEW_W - hw) * 0.5f), rpx(VIEW_H - 14.f));
     window.draw(hint);

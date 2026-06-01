@@ -149,7 +149,7 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
     }
 
     // 3. Numer pokoju oraz Monetki
-    roomText.setString("ROOM: " + std::to_string(roomId));
+    roomText.setString("ROOM: " + std::to_string(roomId + 1));
     roomText.setPosition(px(rightSideX), px(BAR_Y - 2.f)); // Lekko podniesione dla rozmiaru 16
     window.draw(roomText);
 

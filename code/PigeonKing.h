@@ -20,6 +20,11 @@ enum class FlyingState {
     DIVEBOMB_RECOVER
 };
 
+enum class PigeonBossTier {
+    WEAK,   // room 25
+    STRONG  // room 50 — final boss
+};
+
 // ── Wave hazard zone ─────────────────────────────────────────────────────────
 struct WaveZone {
     sf::FloatRect rect;         // half-arena rectangle
@@ -28,13 +33,14 @@ struct WaveZone {
     float dmgTimer   = 0.f;     // how long player has been inside this frame cycle
     bool  active     = false;   // true = deal damage, false = just warning
     bool  done       = false;   // remove when both timers expired
+    bool  buffDmgApplied = false; // monster buff: only one tick per wave zone
 
     sf::RectangleShape shape;   // rendered overlay
 };
 
 class PigeonKing : public Enemy {
 public:
-    explicit PigeonKing(float x, float y);
+    explicit PigeonKing(float x, float y, PigeonBossTier tier = PigeonBossTier::WEAK);
 
     void updateAI(float dt, sf::Vector2f playerPos,
                   std::vector<std::unique_ptr<GameObject>>& spawnQueue) override;
@@ -45,7 +51,8 @@ public:
         return { position.x - 18.f, position.y - 14.f, 36.f, 28.f };
     }
 
-    bool isBoss()          const { return true; }
+    bool isBoss()          const override { return true; }
+    bool canTakeItemDamage() const override { return isVulnerable(); }
     // Phase 1: always hittable. Phase 2: only during VULNERABLE.
     bool isVulnerable()    const {
         return phase == PigeonPhase::FLYING   ||
@@ -91,12 +98,16 @@ private:
     float warnLineY         = 0.f;
     float warnTimer         = 0.f;
 
-    static constexpr float WARN_DURATION     = 0.55f;
-    static constexpr int   WAVES_PER_BARRAGE = 5;
+    static constexpr float WARN_DURATION     = 0.32f;
     static constexpr float WAVE_INTERVAL     = 1.1f;
     static constexpr float WAVE_BULLET_SPD   = 130.f;
-    static constexpr float VULNERABLE_DUR    = 5.0f;
     static constexpr float RECOVER_DUR       = 1.0f;
+
+    float diveSpeedMult    = 1.f;
+    int   wavesPerBarrage  = 5;
+    float vulnerableDur    = 5.f;
+    float warnDuration     = 0.55f;
+    float wavePaceScale    = 1.f;   // lower = faster waves each barrage cycle
 
     // ── Textures ──────────────────────────────────────────────────────────────
     sf::Texture texIdle;

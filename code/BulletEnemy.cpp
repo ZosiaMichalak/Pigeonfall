@@ -153,18 +153,29 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
         if (shootTimer <= 0.f) {
             shootTimer = shootCooldown;
             sf::Vector2f baseDir = playerPos - position;
-
-            // Hard difficulty → tighter spread; Easy → wider spread
-            float spread = std::max(2.f, (15.f - (maxHp - 2) * 3.f) * bulletSpreadMult_);
-            float ox = (static_cast<float>(rand()) / RAND_MAX) * spread * 2.f - spread;
-            float oy = (static_cast<float>(rand()) / RAND_MAX) * spread * 2.f - spread;
+            float baseLen = std::sqrt(baseDir.x * baseDir.x + baseDir.y * baseDir.y);
+            if (baseLen > 0.f) baseDir /= baseLen;
 
             float bulletSpd = 100.f * bulletSpeedMult_;
+            static constexpr int   BURST_COUNT  = 3;
+            static constexpr float BURST_SPREAD = 0.22f;
 
-            spawnQueue.push_back(
-                std::make_unique<Bullet>(position.x, position.y,
-                                         baseDir + sf::Vector2f(ox, oy),
-                                         bulletSpd, true));
+            for (int b = 0; b < BURST_COUNT; ++b) {
+                float offset = (static_cast<float>(b) - 1.f) * BURST_SPREAD;
+                float cosA = std::cos(offset);
+                float sinA = std::sin(offset);
+                sf::Vector2f dir(
+                    baseDir.x * cosA - baseDir.y * sinA,
+                    baseDir.x * sinA + baseDir.y * cosA);
+
+                float ox = (static_cast<float>(rand()) / RAND_MAX) * 4.f - 2.f;
+                float oy = (static_cast<float>(rand()) / RAND_MAX) * 4.f - 2.f;
+
+                spawnQueue.push_back(
+                    std::make_unique<Bullet>(position.x, position.y,
+                                             dir + sf::Vector2f(ox, oy) * 0.02f,
+                                             bulletSpd, true));
+            }
         }
     }
 

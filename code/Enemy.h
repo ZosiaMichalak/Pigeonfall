@@ -54,6 +54,9 @@ public:
     bool          getIsSpawning()const { return isSpawning; }
     void          setSpawning(bool v)  { isSpawning = v; }
     int           getHp()     const { return hp; }
+    int           getMaxHp()  const { return maxHp; }
+    virtual bool  isBoss()    const { return false; }
+    virtual bool  canTakeItemDamage() const { return true; }
 
     // Tight body hitbox used for collision with player
     sf::FloatRect getBounds() const {

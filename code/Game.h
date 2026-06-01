@@ -25,8 +25,10 @@
 #include "PigeonKing.h"
 #include "SoundManager.h"
 
+struct SaveData;
+
 // SLOT_SELECT is shown after NEW_GAME or LOAD_GAME is chosen from the main menu
-enum class AppState { MENU, SLOT_SELECT, PLAYING, DYING, GAME_OVER };
+enum class AppState { MENU, SLOT_SELECT, PLAYING, DYING, GAME_OVER, VICTORY_PENDING, VICTORY };
 
 class Game {
 private:
@@ -82,8 +84,12 @@ private:
     sf::Music music;
     int       musicVolume = 100;
 
-    // ── Play time tracking ────────────────────────────────────────────────────
-    float playTime = 0.f;   // total seconds played on this save slot
+    // ── Play time & deaths (this run) ─────────────────────────────────────────
+    float playTime   = 0.f;
+    int   deathCount = 0;
+
+    static constexpr int BOSS_ROOM_WEAK   = 25;
+    static constexpr int BOSS_ROOM_STRONG = 50;
 
     void applyMusicVolume();
     void applySFXVolume();
@@ -101,12 +107,17 @@ private:
 
     bool isBossRoom = false;
 
-    // ── Death fade & game-over screen ─────────────────────────────────────────
+    // ── Death / victory screen fades ──────────────────────────────────────────
     float fadeTimer;
-    static constexpr float FADE_DURATION = 1.2f;
+    static constexpr float DEATH_ANIM_DURATION   = 2.f;
+    static constexpr float DEATH_FADE_DURATION   = 1.2f;
+    static constexpr float VICTORY_FADE_DURATION = 1.5f;
     int   gameOverSel;
     float gameOverTimer;
     std::unique_ptr<MainMenu> gameOverMenu;
+
+    float victoryTimer = 0.f;
+    int   victorySel   = 0;
 
     // ── Spawn effects ─────────────────────────────────────────────────────────
     struct SpawnEffect {
@@ -162,10 +173,22 @@ private:
 
     void spawnEnemy();
     void nextRoom();
-    void resetRun();
+    void resetRun(bool resetSessionTimer = true);
+    bool isBossRoomIndex(int roomIndex) const;
+    void configureBossRoom();
+    void applyLoadedRoomState(const SaveData& sd);
+    void buildRoomAt(int roomIndex, int layoutId);
+    int  enemiesForRoom(int roomIndex) const;
+    void rollVendingForPlayer(Player* player);
+    void spawnPendingEnemiesAfterLoad();
+    void syncHeldItemAfterMonsterBuff(Player* player);
+
+    bool lastMonsterBuffActive = false;
+    void drawScreenFadeOverlay(float elapsed, float fadeDelay, float fadeDuration);
 
     void drawPauseMenu();
     void drawGameOver();
+    void drawVictory();
 
     // Slot-aware save / load
     void saveGame(int slot);

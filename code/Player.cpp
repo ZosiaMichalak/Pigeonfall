@@ -1,10 +1,13 @@
 #include "Player.h"
 #include "SaveSystem.h"
 #include "DifficultySettings.h"
+#include <SFML/Graphics.hpp>
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
 #include <iostream>
+#include <string>
+#include <vector>
 
 static constexpr float PI = 3.14159265f;
 
@@ -24,6 +27,7 @@ Player::Player(float x, float y) : GameObject(x, y) {
     hasWalkTexture   = textureWalk.loadFromFile("assets/player_walk.png");
     hasAttackTexture = textureAttack.loadFromFile("assets/player_attack.png");
     hasDashTexture   = textureDash.loadFromFile("assets/player_dash.png");
+    hasDieTexture    = textureDie.loadFromFile("assets/player_die.png");
     
     // Wczytanie slasha
     hasSlashTexture = slashTexture.loadFromFile("assets/slash.png");
@@ -93,7 +97,9 @@ Player::Player(float x, float y) : GameObject(x, y) {
     attackAngle         = 0.f;
 
     comboCount          = 0;
+    comboSwingCount     = 0;
     comboWindowTimer    = 0.f;
+    comboLockoutTimer   = 0.f;
     hitConnectedThisSwing = false;
 
     // Niewidzialny hitbox
@@ -104,10 +110,13 @@ Player::Player(float x, float y) : GameObject(x, y) {
 
 // ── Animation state switch ────────────────────────────────────────────────────
 void Player::setAnim(AnimState anim) {
+    if (anim == AnimState::DIE)
+        monsterWalkLocked = false;
+
     if (currentAnim == anim) return;
-    // During monster buff: block switching away from WALK (except DASH)
+    // During monster buff: block switching away from WALK (except DASH / death)
     if (monsterWalkLocked && currentAnim == AnimState::WALK &&
-        anim != AnimState::DASH && anim != AnimState::WALK)
+        anim != AnimState::DASH && anim != AnimState::WALK && anim != AnimState::DIE)
         return;
 
     currentAnim    = anim;
@@ -115,6 +124,16 @@ void Player::setAnim(AnimState anim) {
     animationTimer = 0.f;
 
     switch (anim) {
+    case AnimState::DIE:
+        if (hasDieTexture) {
+            sprite.setTexture(textureDie);
+            frameWidth = 51; frameHeight = 32;
+            maxColumns = dieMaxFrames; sheetCols = 2;
+            frameDuration = DEATH_ANIM_DURATION / static_cast<float>(dieMaxFrames);
+            sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
+            applyFacingScale();
+        }
+        break;
     case AnimState::IDLE:
         // Monster buff: stay on monster mode even when idle
         if (monsterWalkLocked && hasMonsterModeTexture) {
@@ -231,20 +250,72 @@ void Player::buySkill(int id) {
 
 // ── Damage / death ────────────────────────────────────────────────────────────
 void Player::takeDamage(int amount) {
-    if (isInvincible || isDashing) return;
+    if (isInvincible || isDashing || isDead || monsterBuffTimer > 0.f) return;
     hp -= amount;
     isInvincible       = true;
     invincibilityTimer = 1.0f;
     if (hp <= 0) { hp = 0; isDead = true; }
 }
 
+void Player::startDeathAnimation() {
+    isDashing    = false;
+    isAttacking  = false;
+    deathAnimTimer = 0.f;
+    currentColumn  = 0;
+    animationTimer = 0.f;
+    setAnim(AnimState::DIE);
+}
+
+void Player::updateDeathAnimation(float dt) {
+    if (currentAnim != AnimState::DIE) return;
+
+    deathAnimTimer += dt;
+    animationTimer += dt;
+
+    if (animationTimer >= frameDuration) {
+        animationTimer -= frameDuration;
+        if (currentColumn + 1 < maxColumns)
+            currentColumn++;
+    }
+
+    currentFrame = sf::IntRect(
+        (currentColumn % sheetCols) * frameWidth,
+        (currentColumn / sheetCols) * frameHeight,
+        frameWidth, frameHeight);
+
+    if (hasDieTexture) {
+        sprite.setTextureRect(currentFrame);
+        sprite.setPosition(position);
+        applyFacingScale();
+    } else {
+        fallbackShape.setPosition(position);
+        fallbackShape.setFillColor(sf::Color(80, 80, 120));
+    }
+}
+
 void Player::healFull() {
     hp = maxHp;
 }
 
+void Player::assignRandomMonsterEnergyVariant() {
+    static constexpr int kMaxProbe = 4;
+    std::vector<int> available;
+    for (int v = 1; v <= kMaxProbe; ++v) {
+        std::string path = "assets/player_idle_monster" + std::to_string(v) + ".png";
+        if (sf::Texture probe; probe.loadFromFile(path))
+            available.push_back(v);
+    }
+    if (available.empty())
+        monsterVariant = 1;
+    else
+        monsterVariant = available[static_cast<size_t>(std::rand()) % available.size()];
+}
+
 void Player::applyMonsterBuff() {
-    monsterVariant    = 1 + std::rand() % 5;
+    if (monsterVariant <= 0)
+        assignRandomMonsterEnergyVariant();
     monsterWalkLocked = true;
+    loadedHeldItem.clear();
     loadHeldTextures("Monster Energy");
     monsterBuffTimer  = 10.f;
     monsterOneHitKill = true;
@@ -319,9 +390,12 @@ void Player::setHeldItem(const std::string& item) {
     }
 }
 
+void Player::markTotemPurchased() {
+    persistentTotemBoughtThisRun = true;
+}
+
 void Player::addTotemCharge() {
     persistentTotemCharges++;
-    persistentTotemBoughtThisRun = true;
 }
 
 bool Player::consumeSecondChance() {
@@ -350,7 +424,18 @@ void Player::resetRunStats() {
     persistentSecondChanceUsed   = false;
     persistentTotemCharges       = 0;
     persistentTotemBoughtThisRun = false;
-    // XP, level, skillpoints and upgrades intentionally persist across deaths
+    // XP, level, skill points, and upgrades intentionally persist across deaths (same save)
+}
+
+void Player::resetProgression() {
+    persistentXP               = 0;
+    persistentLevel            = 1;
+    persistentSkillPoints      = 0;
+    persistentXpToNext         = 10;
+    persistentUpgrades         = {};
+    persistentSecondChanceUsed = false;
+    persistentTotemCharges     = 0;
+    persistentTotemBoughtThisRun = false;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -375,17 +460,26 @@ sf::FloatRect Player::getBounds() const {
 // ── Attack ────────────────────────────────────────────────────────────────────
 void Player::updateAttack(float dt, sf::RenderWindow& window) {
     if (attackCooldownTimer > 0.f) attackCooldownTimer -= dt;
+    if (comboLockoutTimer > 0.f)  comboLockoutTimer  -= dt;
 
     // Tick the combo expiry window
     if (comboWindowTimer > 0.f) {
         comboWindowTimer -= dt;
-        if (comboWindowTimer <= 0.f)
-            comboCount = 0;
+        if (comboWindowTimer <= 0.f) {
+            comboCount      = 0;
+            comboSwingCount = 0;
+        }
     }
 
     if (sf::Mouse::isButtonPressed(sf::Mouse::Left) &&
-        !isAttacking && attackCooldownTimer <= 0.f)
+        !isAttacking && attackCooldownTimer <= 0.f && comboLockoutTimer <= 0.f)
     {
+        if (comboWindowTimer > 0.f)
+            comboSwingCount = std::min(3, comboSwingCount + 1);
+        else
+            comboSwingCount = 1;
+        comboWindowTimer = 1.2f;
+
         isAttacking           = true;
         attackTimer           = attackDuration;
         attackCooldownTimer   = attackCooldownMax;
@@ -453,6 +547,12 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
         if (attackTimer <= 0.f) {
             isAttacking = false;
+            if (comboSwingCount >= 3) {
+                comboLockoutTimer = 0.1f;
+                comboSwingCount = 0;
+                comboCount        = 0;
+                comboWindowTimer  = 0.f;
+            }
             if (!hasMonsterModeTexture)
                 setAnim(AnimState::IDLE);
         }
@@ -461,6 +561,8 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 void Player::update(float dt, sf::RenderWindow& window) {
+    if (isDead) return;
+
     if (monsterBuffTimer > 0.f) {
         monsterBuffTimer -= dt;
         if (monsterBuffTimer <= 0.f) {
@@ -468,12 +570,11 @@ void Player::update(float dt, sf::RenderWindow& window) {
             monsterOneHitKill = false;
             monsterWalkLocked = false;
             monsterVariant    = 0;
-            loadedHeldItem    = "";   // force texture reload on next setHeldItem
+            loadedHeldItem.clear();
             hasHeldIdle = false;
             hasHeldWalk = false;
             hasMonsterModeTexture = false;
-            // Snap back to base idle texture
-            currentAnim = AnimState::DASH; // force re-entry
+            currentAnim = AnimState::DASH;
             setAnim(AnimState::IDLE);
         }
     }
@@ -565,7 +666,14 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 void Player::draw(sf::RenderWindow& window) {
-    // 1. Rysowanie gracza (Twój istniejący kod)
+    if (currentAnim == AnimState::DIE) {
+        if (hasDieTexture || hasIdleTexture)
+            window.draw(sprite);
+        else
+            window.draw(fallbackShape);
+        return;
+    }
+
     if (hasIdleTexture) {
         bool visible = !isInvincible ||
                        (static_cast<int>(invincibilityTimer / 0.1f) % 2 == 0);
@@ -618,6 +726,7 @@ void Player::applyLoadedSave(const SaveData& sd) {
     persistentUpgrades         = sd.upgrades; 
     persistentSecondChanceUsed = sd.secondChanceUsed;
     persistentTotemCharges     = sd.totemCharges;
+    persistentTotemBoughtThisRun = sd.totemBoughtThisRun;
 
     // 2. Sync this specific player instance with the newly loaded data
     xp            = persistentXP;

@@ -15,14 +15,15 @@ struct VendingItem {
 };
 
 static const VendingItem VENDING_CATALOGUE[] = {
-    { "Monster Energy", 30, sf::Color(  0, 200,  60) },
-    { "Pizza",          20, sf::Color(220, 100,  20) },
-    { "Duo",            40, sf::Color(200, 160,  20) },
-    { "Annoying Dog",   50, sf::Color(200, 200, 200) },
-    { "Totem",         10, sf::Color(120,  60, 200) },
+    { "Monster Energy", 50, sf::Color(  0, 200,  60) },
+    { "Pizza",          30, sf::Color(220, 100,  20) },
+    { "Duo",            60, sf::Color(200, 160,  20) },
+    { "Annoying Dog",   30, sf::Color(200, 200, 200) },
+    { "Totem",         100, sf::Color(120,  60, 200) },
 };
 static constexpr int CATALOGUE_SIZE = 5;
 static constexpr int SHOP_SLOTS     = 3;
+static constexpr int TOTEM_CATALOGUE_INDEX = 4;
 
 // ── VendingUI ─────────────────────────────────────────────────────────────────
 class VendingUI {

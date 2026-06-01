@@ -12,13 +12,13 @@
 // ── Constructors ──────────────────────────────────────────────────────────────
 
 Room::Room(int id, int enemyCount, sf::Color fallbackColor)
-    : id(id), enemyCount(enemyCount), isCleared(false), floorColor(fallbackColor),
+    : id(id), layoutIndex(0), enemyCount(enemyCount), isCleared(false), floorColor(fallbackColor),
       bgIndex(0), hasBackground(false),
       doorPosition({400.f, 100.f}), doorRotation(0.f),
       playerStart({100.f, 100.f}) {}
 
-Room::Room(int id, const RoomTemplate& tmpl)
-    : id(id), enemyCount(0), isCleared(false),
+Room::Room(int id, const RoomTemplate& tmpl, int layoutIndex)
+    : id(id), layoutIndex(layoutIndex), enemyCount(0), isCleared(false),
       floorColor(sf::Color(20, 25, 40)), bgIndex(tmpl.background), hasBackground(false),
       doorPosition(tmpl.doorPosition), doorRotation(tmpl.doorRotation),
       playerStart(tmpl.playerStart)
@@ -121,15 +121,34 @@ std::vector<RoomTemplate> getAll() {
 };
 
 
-RoomTemplate getRandom() {
+const RoomTemplate& getByIndex(int index) {
+    static const std::vector<RoomTemplate> all = getAll();
+    if (index < 0 || index >= static_cast<int>(all.size()))
+        index = 0;
+    return all[static_cast<size_t>(index)];
+}
+
+int getRandomIndex() {
     static std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
     auto all = getAll();
-
-    // Always skip index 0 (Starter Room) when picking a random combat room
-    if (all.size() <= 1) return all[0];
-
+    if (all.size() <= 1) return 0;
     std::uniform_int_distribution<int> dis(1, static_cast<int>(all.size()) - 1);
-    return all[dis(rng)];
+    return dis(rng);
+}
+
+RoomTemplate getRandom() {
+    return getByIndex(getRandomIndex());
+}
+
+RoomTemplate getBossArena() {
+    RoomTemplate boss;
+    boss.name         = "Boss Arena";
+    boss.background   = 0;
+    boss.props        = {};
+    boss.doorPosition = {400.f, 100.f};
+    boss.doorRotation = 90.f;
+    boss.playerStart  = {50.f, 110.f};
+    return boss;
 }
 
 } // namespace RoomTemplates

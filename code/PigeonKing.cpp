@@ -2,6 +2,7 @@
 #include "Bullet.h"
 #include "BulletEnemy.h"
 #include "DashEnemy.h"
+#include "DifficultySettings.h"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -11,13 +12,13 @@ static constexpr float PI = 3.14159265f;
 static constexpr float SCALE            = 1.5f;
 static constexpr float ORBIT_SPEED      = 1.1f;
 static constexpr float ORBIT_RADIUS     = 75.f;
-static constexpr float DIVE_WINDUP      = 1.4f;
-static constexpr float DIVE_SPEED       = 420.f;
-static constexpr float DIVE_DURATION    = 0.30f;
-static constexpr float DIVE_RECOVER     = 0.55f;
-static constexpr float DIVE_CD_MIN      = 2.5f;
-static constexpr float DIVE_CD_MAX      = 4.5f;
-static constexpr float FEATHER_SPEED    = 110.f;
+static constexpr float DIVE_WINDUP      = 1.0f;
+static constexpr float DIVE_SPEED       = 480.f;
+static constexpr float DIVE_DURATION    = 0.35f;
+static constexpr float DIVE_RECOVER     = 0.45f;
+static constexpr float DIVE_CD_MIN      = 1.8f;
+static constexpr float DIVE_CD_MAX      = 3.2f;
+static constexpr float FEATHER_SPEED    = 135.f;
 static constexpr float LANDING_DURATION = 0.6f;
 static constexpr int   BOSS_HP          = 120;
 
@@ -26,9 +27,26 @@ static constexpr int   FRAME_W = 51;
 static constexpr int   FRAME_H = 32;
 
 // ── Constructor ───────────────────────────────────────────────────────────────
-PigeonKing::PigeonKing(float x, float y) : Enemy(x, y) {
-    maxHp     = BOSS_HP;
-    hp        = maxHp;
+PigeonKing::PigeonKing(float x, float y, PigeonBossTier tier) : Enemy(x, y) {
+    const DifficultySettings& diff = ActiveDifficulty::settings;
+
+    int baseHp = (tier == PigeonBossTier::STRONG) ? 380 : 170;
+    maxHp = static_cast<int>(baseHp * diff.bossHpMult);
+    hp    = maxHp;
+
+    if (tier == PigeonBossTier::STRONG) {
+        wavesPerBarrage = 10;
+        vulnerableDur   = 1.6f;
+        diveSpeedMult   = 1.65f * diff.bossDiveSpeedMult;
+        warnDuration    = WARN_DURATION * diff.bossWarnMult;
+    } else {
+        wavesPerBarrage = 7;
+        vulnerableDur   = 2.4f;
+        diveSpeedMult   = 1.25f * diff.bossDiveSpeedMult;
+        warnDuration    = WARN_DURATION * diff.bossWarnMult;
+    }
+    vulnerableDur *= diff.bossVulnerableMult;
+
     moveSpeed = 0.f;
 
     // Override base class frame size for tickAnim
@@ -204,7 +222,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
             shootTimer -= dt;
             if (shootTimer <= 0.f) {
                 shootFeathers(playerPos, spawnQueue);
-                shootTimer = 2.2f;
+                shootTimer = 1.5f;
             }
             diveCD -= dt;
             if (diveCD <= 0.f) {
@@ -241,7 +259,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
             break;
         }
         case FlyingState::DIVEBOMB_LUNGE: {
-            position += diveLungeDir * DIVE_SPEED * dt;
+            position += diveLungeDir * DIVE_SPEED * diveSpeedMult * dt;
             diveLungeTimer -= dt;
             if (diveLungeTimer <= 0.f) {
                 flyState         = FlyingState::DIVEBOMB_RECOVER;
@@ -287,7 +305,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
 
         if (landingTimer <= 0.f) {
             phase          = PigeonPhase::WAVE_BARRAGE;
-            wavesRemaining = WAVES_PER_BARRAGE;
+            wavesRemaining = wavesPerBarrage;
             waveTimer      = 0.6f;
             waveFromLeft   = true;
             showWarnLine   = false;
@@ -313,7 +331,10 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
 
     // ═══════════════════════════════════════════════════════════════════════
     case PigeonPhase::WAVE_BARRAGE: {
-        // Boss is NOT hittable here (isVulnerable() returns false)
+        if (!isHit) {
+            if (hasSprite) sprite.setColor(sf::Color::White);
+            else           shape.setFillColor(baseColor);
+        }
 
         // ── Tick existing zones ───────────────────────────────────────────────
         for (auto& z : waveZones) {
@@ -344,35 +365,43 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
                            [](const WaveZone& z){ return z.done; }),
             waveZones.end());
 
-        // ── Schedule next zone (only when no zone is active or warning) ─────────
+        // ── Schedule next zone ────────────────────────────────────────────────────
         waveTimer -= dt;
-        bool anyZoneLive = !waveZones.empty();
-        if (waveTimer <= 0.f && wavesRemaining > 0 && !anyZoneLive) {
-            // Pick a random half: 0=top, 1=bottom, 2=left, 3=right
-            int side = std::rand() % 4;
+        if (waveTimer <= 0.f && wavesRemaining > 0) {
+            // Spawn on the arena half that currently contains the player
+            float dx = playerPos.x - 200.f;
+            float dy = playerPos.y - 97.5f;
+            int side;
+            if (std::abs(dx) >= std::abs(dy))
+                side = (playerPos.x < 200.f) ? 2 : 3;
+            else
+                side = (playerPos.y < 97.5f) ? 0 : 1;
+
             WaveZone z;
             switch (side) {
-                case 0: z.rect = { 0.f,   0.f, 400.f,  97.f }; break; // top
-                case 1: z.rect = { 0.f,  98.f, 400.f,  97.f }; break; // bottom
-                case 2: z.rect = { 0.f,   0.f, 200.f, 195.f }; break; // left
-                case 3: z.rect = { 200.f, 0.f, 200.f, 195.f }; break; // right
+                case 0: z.rect = { 0.f,   0.f, 400.f,  97.f }; break;
+                case 1: z.rect = { 0.f,  98.f, 400.f,  97.f }; break;
+                case 2: z.rect = { 0.f,   0.f, 200.f, 195.f }; break;
+                default: z.rect = { 200.f, 0.f, 200.f, 195.f }; break;
             }
             z.shape.setSize({ z.rect.width, z.rect.height });
             z.shape.setPosition(z.rect.left, z.rect.top);
             z.shape.setFillColor(sf::Color(255, 80, 30, 80));
-            z.warnTimer   = WARN_DURATION;
-            z.activeTimer = 2.0f;
-            z.dmgTimer    = 0.f;
-            z.active      = false;
-            z.done        = false;
+            z.warnTimer       = warnDuration;
+            z.activeTimer     = 1.15f;
+            z.dmgTimer        = 0.f;
+            z.active          = false;
+            z.done            = false;
+            z.buffDmgApplied  = false;
             waveZones.push_back(std::move(z));
 
             --wavesRemaining;
-            waveTimer = WARN_DURATION + 2.0f + 0.3f; // warn + active + gap
+            waveTimer = (warnDuration + 0.55f) * wavePaceScale;
 
             if (wavesRemaining <= 0) {
+                waveZones.clear();
                 phase           = PigeonPhase::VULNERABLE;
-                vulnerableTimer = VULNERABLE_DUR;
+                vulnerableTimer = vulnerableDur;
                 if (hasSprite && texIdle.getSize().x > 0)
                     setSheet(texIdle, 3, 1, 0.18f);
             }
@@ -382,11 +411,10 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
 
     // ═══════════════════════════════════════════════════════════════════════
     case PigeonPhase::VULNERABLE: {
-        // Hittable — clear any tint so boss looks normal (hit flash still works)
         vulnerableTimer -= dt;
         if (!isHit) {
-            if (hasSprite) sprite.setColor(sf::Color::White);
-            else           shape.setFillColor(baseColor);
+            if (hasSprite) sprite.setColor(sf::Color(140, 255, 160));
+            else           shape.setFillColor(sf::Color(100, 220, 120));
         }
 
         if (vulnerableTimer <= 0.f) {
@@ -395,6 +423,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
             phase        = PigeonPhase::RECOVER;
             recoverTimer = RECOVER_DUR;
             ++barrageCount;
+            wavePaceScale = std::max(0.30f, wavePaceScale * 0.82f);
             // Back to walk sheet
             if (hasSprite && texWalk.getSize().x > 0)
                 setSheet(texWalk, 6, 2, 0.14f);
@@ -407,7 +436,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
         recoverTimer -= dt;
         if (recoverTimer <= 0.f) {
             phase          = PigeonPhase::WAVE_BARRAGE;
-            wavesRemaining = WAVES_PER_BARRAGE + (barrageCount / 2);
+            wavesRemaining = wavesPerBarrage + (barrageCount / 2);
             waveTimer      = 0.6f;
             waveFromLeft   = (std::rand() % 2 == 0);
             showWarnLine   = false;
@@ -447,9 +476,10 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
 void PigeonKing::draw(sf::RenderWindow& window) {
     if (!isActive()) return;
 
-    // Draw hazard zones beneath the boss sprite
-    for (const auto& z : waveZones)
-        if (!z.done) window.draw(z.shape);
+    if (phase != PigeonPhase::VULNERABLE) {
+        for (const auto& z : waveZones)
+            if (!z.done) window.draw(z.shape);
+    }
 
     if (phase == PigeonPhase::FLYING && flyState == FlyingState::DIVEBOMB_WINDUP)
         window.draw(shadow);

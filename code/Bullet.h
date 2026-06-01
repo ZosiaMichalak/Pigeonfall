@@ -2,12 +2,16 @@
 #define BULLET_H
 
 #include "GameObject.h"
+#include <SFML/Graphics.hpp>
 
 class Bullet : public GameObject {
 private:
     sf::CircleShape shape;
+    sf::Texture       tex;
+    sf::Sprite        sprite;
+    bool              hasSprite = false;
     sf::Vector2f velocity;
-    bool fromEnemy;  
+    bool fromEnemy;
 
 public:
     Bullet(float x, float y, sf::Vector2f direction, float speed, bool fromEnemy = true);
@@ -15,7 +19,10 @@ public:
     void update(float dt, sf::RenderWindow& window) override;
     void draw(sf::RenderWindow& window) override;
 
-    sf::FloatRect getBounds() const { return shape.getGlobalBounds(); }
+    sf::FloatRect getBounds() const {
+        if (hasSprite) return sprite.getGlobalBounds();
+        return shape.getGlobalBounds();
+    }
     bool isFromEnemy() const { return fromEnemy; }
 
     void deflect(sf::Vector2f newDirection, float newSpeed);

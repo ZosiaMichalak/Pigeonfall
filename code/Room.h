@@ -39,16 +39,23 @@ struct RoomTemplate {
 };
 
 namespace RoomTemplates {
+    // Saved in game files — must stay stable across versions
+    constexpr int BOSS_LAYOUT = -1;
+
     std::vector<RoomTemplate> getAll();
-    RoomTemplate getRandom();
+    const RoomTemplate& getByIndex(int index);
+    int                 getRandomIndex();
+    RoomTemplate        getRandom();
+    RoomTemplate        getBossArena();
 }
 
 class Room {
 public:
     Room(int id, int enemyCount, sf::Color fallbackColor);
-    explicit Room(int id, const RoomTemplate& tmpl);
+    Room(int id, const RoomTemplate& tmpl, int layoutIndex = 0);
 
-    int  getId()         const { return id; }
+    int  getId()            const { return id; }
+    int  getLayoutIndex()   const { return layoutIndex; }
     int  getEnemyCount() const { return enemyCount; }
     bool getIsCleared()  const { return isCleared; }
 
@@ -64,6 +71,7 @@ public:
 
 private:
     int          id;
+    int          layoutIndex;
     int          enemyCount;
     bool         isCleared;
     sf::Color    floorColor;

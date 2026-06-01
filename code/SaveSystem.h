@@ -3,6 +3,7 @@
 
 #include <string>
 #include <array>
+#include <vector>
 
 static constexpr int SAVE_SKILL_COUNT = 6;
 static constexpr int SAVE_SLOT_COUNT  = 3;
@@ -33,12 +34,15 @@ struct SaveData {
     std::array<int, SAVE_SKILL_COUNT> upgrades = {};
     bool  secondChanceUsed = false;
     int   totemCharges  = 0;
+    bool  totemBoughtThisRun = false;
 
     // Run state
     int   roomIndex     = 0;
     int   coins         = 0;
     float playTime      = 0.f;   // total play time in seconds
     bool  roomCleared   = false; // whether current room was already cleared
+    int   enemiesLeft   = 0;     // enemies still waiting to spawn in this room
+    std::vector<int> roomLayouts; // template index per room (RoomTemplates::BOSS_LAYOUT = boss)
     std::string heldItem;
 
     // Options
