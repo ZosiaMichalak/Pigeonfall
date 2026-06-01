@@ -34,8 +34,9 @@ public:
     SlotUIResult handleEvent(const sf::Event& event);
     void render(sf::RenderWindow& window);
 
-    int        getSelectedSlot() const { return selectedSlot_; }
-    SlotUIMode getMode()         const { return mode_; }
+    int        getSelectedSlot()     const { return selectedSlot_; }
+    SlotUIMode getMode()             const { return mode_; }
+    Difficulty getChosenDifficulty() const { return chosenDifficulty_; }
 
 private:
     sf::Font& font_;
@@ -44,17 +45,23 @@ private:
     SlotUIMode mode_        = SlotUIMode::SAVE;
 
     struct SlotInfo {
-        bool    exists    = false;
-        int     level     = 0;
-        int     roomIndex = 0;
-        int     coins     = 0;
-        float   playTime  = 0.f;
+        bool       exists     = false;
+        int        level      = 0;
+        int        roomIndex  = 0;
+        int        coins      = 0;
+        float      playTime   = 0.f;
+        Difficulty difficulty = Difficulty::NORMAL;
     };
     std::array<SlotInfo, SAVE_SLOT_COUNT> slots_;
 
     // Delete-confirmation state
     bool confirmingDelete_ = false;   // true = showing "Delete? Y/N"
     int  confirmSel_       = 1;       // 0 = Yes, 1 = No
+
+    // Difficulty picker state (NEW_GAME mode only)
+    bool       pickingDifficulty_ = false;
+    int        difficultySel_     = 1;  // 0=Easy 1=Normal 2=Hard
+    Difficulty chosenDifficulty_  = Difficulty::NORMAL;
 
     float glowTimer_ = 0.f;
 

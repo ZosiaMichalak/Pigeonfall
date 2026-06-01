@@ -17,11 +17,12 @@ void SaveSlotUI::refresh() {
     for (int i = 0; i < SAVE_SLOT_COUNT; ++i) {
         if (SaveSystem::hasSlot(i)) {
             SaveData sd = SaveSystem::load(i);
-            slots_[i].exists    = sd.exists;
-            slots_[i].level     = sd.level;
-            slots_[i].roomIndex = sd.roomIndex;
-            slots_[i].coins     = sd.coins;
-            slots_[i].playTime  = sd.playTime;
+            slots_[i].exists     = sd.exists;
+            slots_[i].level      = sd.level;
+            slots_[i].roomIndex  = sd.roomIndex;
+            slots_[i].coins      = sd.coins;
+            slots_[i].playTime   = sd.playTime;
+            slots_[i].difficulty = sd.difficulty;
         } else {
             slots_[i] = {};
         }
@@ -34,6 +35,9 @@ void SaveSlotUI::open(SlotUIMode mode) {
     selectedSlot_     = 0;
     confirmingDelete_ = false;
     confirmSel_       = 1;
+    pickingDifficulty_ = false;
+    difficultySel_    = 1;
+    chosenDifficulty_ = Difficulty::NORMAL;
     glowTimer_        = 0.f;
     refresh();
 }
@@ -49,6 +53,26 @@ SlotUIResult SaveSlotUI::handleEvent(const sf::Event& event) {
     if (event.type != sf::Event::KeyPressed) return SlotUIResult::NONE;
 
     auto key = event.key.code;
+
+    // ── Difficulty picker (NEW_GAME only, after slot chosen) ──────────────────
+    if (pickingDifficulty_) {
+        if (key == sf::Keyboard::Left  || key == sf::Keyboard::A)
+            difficultySel_ = (difficultySel_ - 1 + 3) % 3;
+        if (key == sf::Keyboard::Right || key == sf::Keyboard::D)
+            difficultySel_ = (difficultySel_ + 1) % 3;
+
+        if (key == sf::Keyboard::E || key == sf::Keyboard::Return ||
+            key == sf::Keyboard::Space) {
+            chosenDifficulty_  = static_cast<Difficulty>(difficultySel_);
+            pickingDifficulty_ = false;
+            close();
+            return SlotUIResult::SELECTED;
+        }
+        if (key == sf::Keyboard::Escape || key == sf::Keyboard::Q) {
+            pickingDifficulty_ = false;  // go back to slot selection
+        }
+        return SlotUIResult::NONE;
+    }
 
     // ── Delete-confirmation sub-menu ──────────────────────────────────────────
     if (confirmingDelete_) {
@@ -86,6 +110,13 @@ SlotUIResult SaveSlotUI::handleEvent(const sf::Event& event) {
         // LOAD: can't load an empty slot
         if (mode_ == SlotUIMode::LOAD && !slots_[selectedSlot_].exists)
             return SlotUIResult::NONE;
+
+        // NEW_GAME: open difficulty picker before confirming
+        if (mode_ == SlotUIMode::NEW_GAME) {
+            pickingDifficulty_ = true;
+            difficultySel_     = 1;  // default NORMAL
+            return SlotUIResult::NONE;
+        }
 
         close();
         return SlotUIResult::SELECTED;
@@ -180,6 +211,16 @@ void SaveSlotUI::drawSlotCard(sf::RenderWindow& w,
                            sf::Color(160, 155, 200), cx + 8.f, cy + 38.f);
     w.draw(roomT);
 
+    // Difficulty badge
+    {
+        sf::Color diffCol = (s.difficulty == Difficulty::EASY)   ? sf::Color(80, 200, 80)
+                          : (s.difficulty == Difficulty::HARD)   ? sf::Color(220, 70, 70)
+                                                                  : sf::Color(220, 180, 50);
+        auto diffT = makeText(difficultyName(s.difficulty), 16, diffCol, cx + 8.f, cy + 52.f);
+        diffT.setScale(0.75f, 0.75f);
+        w.draw(diffT);
+    }
+
     // Format play time as h:mm:ss
     {
         int totalSec = static_cast<int>(s.playTime);
@@ -191,7 +232,8 @@ void SaveSlotUI::drawSlotCard(sf::RenderWindow& w,
             std::snprintf(timeBuf, sizeof(timeBuf), "%d:%02d:%02d", h, m, sc);
         else
             std::snprintf(timeBuf, sizeof(timeBuf), "%d:%02d", m, sc);
-        auto timeT = makeText(timeBuf, 16, sf::Color(150, 210, 150), cx + 8.f, cy + 52.f);
+        auto timeT = makeText(timeBuf, 16, sf::Color(150, 210, 150), cx + 8.f, cy + 64.f);
+        timeT.setScale(0.75f, 0.75f);
         w.draw(timeT);
     }
 
@@ -255,6 +297,53 @@ void SaveSlotUI::render(sf::RenderWindow& window) {
         px(PX + (PW - nav.getLocalBounds().width * 0.7f) / 2.f),
         px(PY + PH - 14.f));
     window.draw(nav);
+
+    // ── Difficulty picker popup (NEW_GAME only) ───────────────────────────────
+    if (pickingDifficulty_) {
+        const float DW = 230.f, DH = 80.f;
+        const float DX = px((VIEW_W - DW) / 2.f);
+        const float DY = px((VIEW_H - DH) / 2.f);
+        drawPanel(window, DX, DY, DW, DH, sf::Color(8, 8, 20), sf::Color(120, 90, 200));
+
+        sf::Text q("Choose Difficulty", font_, 16);
+        q.setFillColor(sf::Color(190, 150, 255));
+        q.setPosition(px(DX + (DW - q.getLocalBounds().width) / 2.f), px(DY + 7.f));
+        window.draw(q);
+
+        struct DiffBtn { const char* label; sf::Color col; };
+        DiffBtn dbns[3] = {
+            { "EASY",   sf::Color(80,  200, 80)  },
+            { "NORMAL", sf::Color(220, 180, 50)  },
+            { "HARD",   sf::Color(220,  70, 70)  }
+        };
+        const float BTN_W   = 58.f;
+        const float BTN_GAP = 8.f;
+        const float BTN_TOTAL = 3 * BTN_W + 2 * BTN_GAP;
+        for (int i = 0; i < 3; ++i) {
+            bool sel = (difficultySel_ == i);
+            float bx = px(DX + (DW - BTN_TOTAL) / 2.f + i * (BTN_W + BTN_GAP));
+            float by = DY + 32.f;
+            sf::RectangleShape btn({BTN_W, 22.f});
+            btn.setFillColor(sel ? sf::Color(30, 22, 50) : sf::Color(14, 12, 24));
+            btn.setOutlineThickness(1.f);
+            btn.setOutlineColor(sel ? dbns[i].col : sf::Color(55, 45, 80));
+            btn.setPosition(px(bx), px(by));
+            window.draw(btn);
+
+            sf::Text bLabel(dbns[i].label, font_, 16);
+            bLabel.setFillColor(sel ? dbns[i].col : sf::Color(90, 80, 110));
+            bLabel.setScale(0.85f, 0.85f);
+            float lw = bLabel.getLocalBounds().width * 0.85f;
+            bLabel.setPosition(px(bx + (BTN_W - lw) / 2.f), px(by + 3.f));
+            window.draw(bLabel);
+        }
+
+        sf::Text hint2("A/D select     E confirm     Q back", font_, 16);
+        hint2.setScale(0.62f, 0.62f);
+        hint2.setFillColor(sf::Color(70, 65, 105));
+        hint2.setPosition(px(DX + (DW - hint2.getLocalBounds().width * 0.62f) / 2.f), px(DY + DH - 14.f));
+        window.draw(hint2);
+    }
 
     // ── Delete confirmation pop-up ────────────────────────────────────────────
     if (confirmingDelete_) {

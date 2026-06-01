@@ -9,6 +9,7 @@
 #include "Vending.h"
 #include "Trash.h"
 #include "Hydrant.h"
+#include "DifficultySettings.h"
 #include <algorithm>
 #include <ctime>
 #include <cmath>
@@ -401,6 +402,7 @@ void Game::resetRun() {
 
     currentRoomIndex        = 0;
     enemiesRemainingToSpawn = 0;
+    isBossRoom              = false;
     totalCoins              = 50;
     playTime                = 0.f;
     heldItem                = "";
@@ -433,7 +435,7 @@ void Game::saveGame(int slot) {
     sd.secondChanceUsed = playerPtr->isSecondChanceUsed();
     sd.totemCharges     = playerPtr->getTotemCharges();
 
-    for (int i = 0; i < SKILL_COUNT; ++i)
+    for (int i = 0; i < SAVE_SKILL_COUNT; ++i)
         sd.upgrades[i] = playerPtr->getUpgradeLevel(i);
 
     sd.roomIndex   = currentRoomIndex;
@@ -444,6 +446,7 @@ void Game::saveGame(int slot) {
     sd.fullscreen  = isFullscreen;
     sd.musicVolume = musicVolume;
     sd.sfxVolume   = sfxVolume;
+    sd.difficulty  = ActiveDifficulty::current;
 
     SaveSystem::save(sd, slot);
 }
@@ -452,6 +455,7 @@ void Game::loadGame(int slot) {
     SaveData sd = SaveSystem::load(slot);
     if (!sd.exists) return;
 
+    ActiveDifficulty::set(sd.difficulty);
     resetRun();
     if (!objects.empty()) {
         if (auto* p = dynamic_cast<Player*>(objects[0].get()))
@@ -625,6 +629,7 @@ void Game::run() {
                         event.key.code == sf::Keyboard::Return ||
                         event.key.code == sf::Keyboard::Space) {
                         if (gameOverSel == 0) {
+                            ActiveDifficulty::set(ActiveDifficulty::current);
                             resetRun();
                             appState = AppState::PLAYING;
                         } else {
@@ -662,6 +667,7 @@ void Game::run() {
                     } else if (pendingMenuAction == MenuAction::NEW_GAME) {
                         // Wipe the chosen slot and start a fresh run
                         SaveSystem::deleteSlot(activeSlot);
+                        ActiveDifficulty::set(slotUI.getChosenDifficulty());
                         resetRun();
                     } else {
                         // SAVE from pause menu — just save to the chosen slot
@@ -834,7 +840,7 @@ void Game::run() {
         } else if (appState == AppState::SLOT_SELECT) {
             // Draw the menu background then overlay the slot picker
             window.clear(sf::Color::Black);
-            mainMenu->render(window);
+            if (mainMenu) mainMenu->render(window);
             slotUI.render(window);
             window.display();
         } else if (appState == AppState::DYING) {
@@ -1038,6 +1044,11 @@ void Game::update(float dt) {
             db = dog->getBounds();
         }
     }
+
+    // Play shoot SFX for each enemy bullet just spawned (must fire before spawnQueue is routed/cleared)
+    for (auto& o : spawnQueue)
+        if (auto* b = dynamic_cast<Bullet*>(o.get()))
+            if (b->isFromEnemy()) soundMgr.play(SFX::SHOOT);
 
     // In boss room: route enemy spawns through pendingSpawns (0.3s anim, capped at 7)
     for (auto& o : spawnQueue) {
@@ -1274,13 +1285,6 @@ void Game::update(float dt) {
             }
         }
     }
-
-    // Play shoot SFX for each enemy bullet just spawned
-    for (auto& o : spawnQueue)
-        if (auto* b = dynamic_cast<Bullet*>(o.get()))
-            if (b->isFromEnemy()) soundMgr.play(SFX::SHOOT);
-    for (auto& o : spawnQueue) objects.push_back(std::move(o));
-    spawnQueue.clear();
 
     objects.erase(
         std::remove_if(objects.begin(), objects.end(),

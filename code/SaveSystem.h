@@ -7,6 +7,21 @@
 static constexpr int SAVE_SKILL_COUNT = 6;
 static constexpr int SAVE_SLOT_COUNT  = 3;
 
+enum class Difficulty : int {
+    EASY   = 0,
+    NORMAL = 1,
+    HARD   = 2
+};
+
+inline const char* difficultyName(Difficulty d) {
+    switch (d) {
+    case Difficulty::EASY:   return "EASY";
+    case Difficulty::NORMAL: return "NORMAL";
+    case Difficulty::HARD:   return "HARD";
+    default:                 return "NORMAL";
+    }
+}
+
 struct SaveData {
     bool  exists        = false;
 
@@ -30,6 +45,9 @@ struct SaveData {
     bool  fullscreen    = false;
     int   musicVolume   = 100;
     int   sfxVolume     = 70;
+
+    // Difficulty — locked at new-game creation
+    Difficulty difficulty = Difficulty::NORMAL;
 };
 
 class SaveSystem {

@@ -1,5 +1,6 @@
 #include "Player.h"
 #include "SaveSystem.h"
+#include "DifficultySettings.h"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -184,8 +185,11 @@ void Player::setAnim(AnimState anim) {
 
 // ── Skills ────────────────────────────────────────────────────────────────────
 void Player::applySkillStats() {
-    speed  = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
-    maxHp  = 5         + persistentUpgrades[SK_HEALTH];
+    const DifficultySettings& diff = ActiveDifficulty::settings;
+
+    speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
+    maxHp = static_cast<int>(std::round((5 + persistentUpgrades[SK_HEALTH]) * diff.playerHpMult));
+    if (maxHp < 1) maxHp = 1;
 
     attackDamage = 1 + persistentUpgrades[SK_ATTACK];
 

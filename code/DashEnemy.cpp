@@ -1,4 +1,5 @@
 #include "DashEnemy.h"
+#include "DifficultySettings.h"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -8,20 +9,25 @@ static constexpr float PI = 3.14159265f;
 // Sprite sheet layouts (all frames 51x32):
 //   dashEnemy_idle    : 1 col x 3 rows  =>  3 frames
 //   dashEnemy_walk    : 2 cols x 3 rows =>  6 frames
-//   dashEnemy_loading : 2 cols x 4 rows =>  8 frames  (wind-up / loading)
+//   dashEnemy_loading : 2 cols x 4 rows =>  8 frames
 //   dashEnemy_dash    : 2 cols x 4 rows =>  8 frames
 
 DashEnemy::DashEnemy(float x, float y, int tier) : Enemy(x, y) {
-    maxHp     = 3 + tier;
-    hp        = maxHp;
-    moveSpeed = 30.f + tier * 5.f;
+    const DifficultySettings& diff = ActiveDifficulty::settings;
 
-    dashSpeed        = 420.f + tier * 30.f;
+    // ── Stats (difficulty-scaled) ─────────────────────────────────────────────
+    maxHp = static_cast<int>(std::round((3 + tier) * diff.enemyHpMult));
+    if (maxHp < 1) maxHp = 1;
+    hp        = maxHp;
+    moveSpeed = (30.f + tier * 5.f) * diff.enemySpeedMult;
+
+    dashSpeed        = (420.f + tier * 30.f) * diff.dashSpeedMult;
     dashDuration     = 0.18f;
     dashTimer        = 0.f;
     dashDirection    = sf::Vector2f(0.f, 0.f);
 
-    windUpDuration   = std::max(0.18f, 0.35f - tier * 0.04f);
+    // Shorter wind-up = harder (less reaction time)
+    windUpDuration   = std::max(0.10f, (0.35f - tier * 0.04f) * diff.dashWindupMult);
     windUpTimer      = 0.f;
 
     stalkDuration    = 1.4f;
@@ -34,7 +40,8 @@ DashEnemy::DashEnemy(float x, float y, int tier) : Enemy(x, y) {
     recoverDuration      = 0.4f;
     recoverTimer         = 0.f;
 
-    dashCooldownDuration = std::max(0.9f, 1.6f - tier * 0.1f);
+    // Shorter cooldown = dashes more often (harder)
+    dashCooldownDuration = std::max(0.5f, (1.6f - tier * 0.1f) * diff.dashCdMult);
     dashCooldownTimer    = dashCooldownDuration * (static_cast<float>(rand()) / RAND_MAX);
 
     dashState = DashEnemyState::STALK;
@@ -54,11 +61,9 @@ DashEnemy::DashEnemy(float x, float y, int tier) : Enemy(x, y) {
         sprite.setOrigin(frameW / 2.f, frameH / 2.f);
     }
 
-    // Fallback colour
     shape.setFillColor(baseColor);
     hpBarFront.setFillColor(sf::Color(r, 50, b));
 
-    // NAPRAWA: Zaktualizuj grafikę przed 1. klatką!
     setSheet(dashState);
     if (hasSprite) tickAnim(0.f);
 }
@@ -71,14 +76,12 @@ void DashEnemy::setSheet(DashEnemyState s) {
 
     switch (s) {
     case DashEnemyState::STALK:
-        // Use walk animation when stalking/orbiting the player
         sprite.setTexture(texWalk);
         animMaxCols   = 6;
         animSheetCols = 2;
         frameDur      = 0.10f;
         break;
     case DashEnemyState::RECOVER:
-        // Use idle animation only when recovering from a dash
         sprite.setTexture(texIdle);
         animMaxCols   = 3;
         animSheetCols = 1;
@@ -86,7 +89,6 @@ void DashEnemy::setSheet(DashEnemyState s) {
         break;
     case DashEnemyState::WIND_UP:
         sprite.setTexture(texLoading);
-        // Play loading at a speed that finishes in windUpDuration
         animMaxCols   = 8;
         animSheetCols = 2;
         frameDur      = windUpDuration / 8.f;
@@ -125,7 +127,6 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
 
     if (dashCooldownTimer > 0.f) dashCooldownTimer -= dt;
 
-    // Update facing toward player
     if (dist > 0.f) facingLeft = (toPlayer.x < 0.f);
 
     // ── State machine ──────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     case DashEnemyState::DASH: {
         setSheet(DashEnemyState::DASH);
 
-        if (dashTimer < dashDuration) dashJustStarted = false;  // clear after first frame
+        if (dashTimer < dashDuration) dashJustStarted = false;
         position += dashDirection * dashSpeed * dt;
         dashTimer -= dt;
         if (dashTimer <= 0.f) {
@@ -199,7 +200,6 @@ void DashEnemy::updateAI(float dt, sf::Vector2f playerPos,
     if (position.y < 10.f)  position.y = 10.f;
     if (position.y > 185.f) position.y = 185.f;
 
-    // ── Finalize visuals ───────────────────────────────────────────────────────
     if (hasSprite) {
         tickAnim(dt);
     } else {

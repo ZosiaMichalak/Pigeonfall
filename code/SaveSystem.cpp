@@ -4,7 +4,7 @@
 #include <cstdio>
 
 static constexpr uint32_t MAGIC   = 0xB2EAD0C5u;
-static constexpr uint32_t VERSION = 4u;
+static constexpr uint32_t VERSION = 5u;
 
 std::string SaveSystem::slotPath(int slot) {
     return "save" + std::to_string(slot) + ".dat";
@@ -44,6 +44,9 @@ bool SaveSystem::save(const SaveData& data, int slot) {
     write(&data.fullscreen,   sizeof(data.fullscreen));
     write(&data.musicVolume,  sizeof(data.musicVolume));
     write(&data.sfxVolume,    sizeof(data.sfxVolume));
+
+    int diffInt = static_cast<int>(data.difficulty);
+    write(&diffInt, sizeof(diffInt));
 
     std::cout << "[SaveSystem] Saved to slot " << slot << " (" << path << ")\n";
     return true;
@@ -90,6 +93,10 @@ SaveData SaveSystem::load(int slot) {
     read(&out.fullscreen,  sizeof(out.fullscreen));
     read(&out.musicVolume, sizeof(out.musicVolume));
     read(&out.sfxVolume,   sizeof(out.sfxVolume));
+
+    int diffInt = 1;
+    read(&diffInt, sizeof(diffInt));
+    out.difficulty = static_cast<Difficulty>(diffInt);
 
     if (f.good()) {
         out.exists = true;

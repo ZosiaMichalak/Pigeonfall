@@ -1,5 +1,6 @@
 #include "BulletEnemy.h"
 #include "Bullet.h"
+#include "DifficultySettings.h"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -9,15 +10,23 @@
 //   bulletEnemy_walk : 2 cols x 3 rows => 6 frames
 
 BulletEnemy::BulletEnemy(float x, float y, int tier) : Enemy(x, y) {
-    maxHp = 2 + tier;
-    hp    = maxHp;
+    const DifficultySettings& diff = ActiveDifficulty::settings;
 
-    moveSpeed   = 40.f + tier * 4.f;
+    // ── Stats (difficulty-scaled) ─────────────────────────────────────────────
+    maxHp = static_cast<int>(std::round((2 + tier) * diff.enemyHpMult));
+    if (maxHp < 1) maxHp = 1;
+    hp = maxHp;
+
+    moveSpeed   = (40.f + tier * 4.f) * diff.enemySpeedMult;
     strafeSpeed = 0.f;
     shootRange  = 140.f + tier * 10.f;
 
-    shootCooldown = std::max(1.2f, 2.2f - tier * 0.2f);
+    shootCooldown = std::max(0.6f, (2.2f - tier * 0.2f) * diff.shootCooldownMult);
     shootTimer    = shootCooldown * (static_cast<float>(rand()) / RAND_MAX);
+
+    // Store bullet speed multiplier so it can be applied at shoot time
+    bulletSpeedMult_ = diff.bulletSpeedMult;
+    bulletSpreadMult_ = diff.bulletSpreadMult;
 
     strafeSign = (rand() % 2 == 0) ? 1 : -1;
     state      = BulletEnemyState::CHASE;
@@ -40,8 +49,7 @@ BulletEnemy::BulletEnemy(float x, float y, int tier) : Enemy(x, y) {
     shape.setFillColor(baseColor);
     hpBarFront.setFillColor(baseColor);
 
-    // NAPRAWA: Zaktualizuj grafikę (wycięcie z klatki i pozycję) przed 1. klatką!
-    if (hasSprite) tickAnim(0.f); 
+    if (hasSprite) tickAnim(0.f);
 }
 
 void BulletEnemy::setSheet(bool walking) {
@@ -103,8 +111,7 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
     bool isMoving = false;
 
     if (state == BulletEnemyState::RETREAT) {
-        // The closer the player, the faster the retreat (up to 2.5× base speed)
-        float panicT     = 1.f - std::min(1.f, dist / 70.f); // 1.0 when touching, 0.0 at 70px
+        float panicT     = 1.f - std::min(1.f, dist / 70.f);
         float retreatSpd = moveSpeed * (1.f + panicT * 1.5f);
         if (dist > 0.f) { desiredMove = (-toPlayer / dist) * retreatSpd; isMoving = true; }
     } else if (state == BulletEnemyState::CHASE) {
@@ -126,7 +133,7 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
     if (position.y < 10.f)  position.y = 10.f;
     if (position.y > 185.f) position.y = 185.f;
 
-    // ── Facing direction with deadzone to prevent rapid flipping ───────────────
+    // ── Facing direction ───────────────────────────────────────────────────────
     if (dist > 0.f) {
         if (toPlayer.x < -1.f) facingLeft = true;
         else if (toPlayer.x > 1.f) facingLeft = false;
@@ -146,12 +153,18 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
         if (shootTimer <= 0.f) {
             shootTimer = shootCooldown;
             sf::Vector2f baseDir = playerPos - position;
-            float spread = std::max(4.f, 15.f - (maxHp - 2) * 3.f);
+
+            // Hard difficulty → tighter spread; Easy → wider spread
+            float spread = std::max(2.f, (15.f - (maxHp - 2) * 3.f) * bulletSpreadMult_);
             float ox = (static_cast<float>(rand()) / RAND_MAX) * spread * 2.f - spread;
             float oy = (static_cast<float>(rand()) / RAND_MAX) * spread * 2.f - spread;
+
+            float bulletSpd = 100.f * bulletSpeedMult_;
+
             spawnQueue.push_back(
                 std::make_unique<Bullet>(position.x, position.y,
-                                         baseDir + sf::Vector2f(ox, oy), 100.f, true));
+                                         baseDir + sf::Vector2f(ox, oy),
+                                         bulletSpd, true));
         }
     }
 
@@ -163,8 +176,6 @@ void BulletEnemy::updateAI(float dt, sf::Vector2f playerPos,
     }
 
     float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
-    
-    // ── Fixed Health bar positioning ───────────────────────────────────────────
     hpBarBack.setPosition (position.x, position.y - 10.f);
     hpBarFront.setPosition(position.x, position.y - 10.f);
     hpBarFront.setSize(sf::Vector2f(9.f * pct, 1.5f));

@@ -15,12 +15,15 @@ private:
     float shootTimer;
     int   strafeSign;
 
+    // Difficulty-baked per-instance multipliers (set in constructor)
+    float bulletSpeedMult_  = 1.f;
+    float bulletSpreadMult_ = 1.f;
+
     sf::Texture texIdle;
     sf::Texture texWalk;
 
     sf::Color baseColor;
 
-    // Switch between idle / walk sheet
     void setSheet(bool walking);
 
 public:
