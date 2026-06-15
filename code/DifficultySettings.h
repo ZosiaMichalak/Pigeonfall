@@ -1,7 +1,21 @@
 #ifndef DIFFICULTY_SETTINGS_H
 #define DIFFICULTY_SETTINGS_H
 
-#include "SaveSystem.h"   // for Difficulty enum
+enum class Difficulty : int {
+    EASY   = 0,
+    NORMAL = 1,
+    HARD   = 2
+};
+
+inline const char* difficultyName(Difficulty d) {
+    switch (d) {
+    case Difficulty::EASY:   return "EASY";
+    case Difficulty::NORMAL: return "NORMAL";
+    case Difficulty::HARD:   return "HARD";
+    default:                 return "NORMAL";
+    }
+}
+
 
 struct DifficultySettings {
 

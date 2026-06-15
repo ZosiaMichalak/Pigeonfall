@@ -1,5 +1,4 @@
 #include "Player.h"
-#include "SaveSystem.h"
 #include "DifficultySettings.h"
 #include <SFML/Graphics.hpp>
 #include <cmath>
@@ -714,30 +713,4 @@ int Player::registerHit() {
     int dmg = attackDamage;
     if (comboCount == 3) dmg *= 3;
     return dmg;
-}
-
-void Player::applyLoadedSave(const SaveData& sd) {
-    // 1. Restore static persistent data from the save file
-    // (Make sure these field names match your actual SaveData struct fields!)
-    persistentXP               = sd.xp;
-    persistentLevel            = sd.level;
-    persistentSkillPoints      = sd.skillPoints;
-    persistentXpToNext         = sd.xpToNext; 
-    persistentUpgrades         = sd.upgrades; 
-    persistentSecondChanceUsed = sd.secondChanceUsed;
-    persistentTotemCharges     = sd.totemCharges;
-    persistentTotemBoughtThisRun = sd.totemBoughtThisRun;
-
-    // 2. Sync this specific player instance with the newly loaded data
-    xp            = persistentXP;
-    level         = persistentLevel;
-    skillPoints   = persistentSkillPoints;
-    upgradeLevels = persistentUpgrades;
-    xpToNextLevel = persistentXpToNext;
-
-    // 3. Re-calculate stats (like speed and maxHp) based on the loaded upgrades
-    applySkillStats();
-    
-    // Fully heal the player or set to saved HP
-    hp = maxHp; 
 }

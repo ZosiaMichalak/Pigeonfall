@@ -6,8 +6,6 @@
 #include <array>
 #include <string>
 
-// Deklaracja wyprzedzająca struktury SaveData
-struct SaveData;
 
 enum class AnimState { IDLE, WALK, DASH, ATTACK, DIE };
 
@@ -154,8 +152,6 @@ private:
 
 public:
     Player(float x, float y);
-
-    void applyLoadedSave(const SaveData& sd);
 
     void update(float dt, sf::RenderWindow& window) override;
     void draw(sf::RenderWindow& window) override;

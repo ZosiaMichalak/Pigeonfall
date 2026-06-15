@@ -1,6 +1,5 @@
 #include "Game.h"
 #include "SoundManager.h"
-#include "SaveSystem.h"
 #include "Bullet.h"
 #include "Car.h"
 #include "Flowers.h"
@@ -30,8 +29,6 @@ static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
 
 // Returns true if ANY of the 3 save slots has data
 static bool anySlotExists() {
-    for (int i = 0; i < SAVE_SLOT_COUNT; ++i)
-        if (SaveSystem::hasSlot(i)) return true;
     return false;
 }
 
@@ -70,7 +67,6 @@ Game::Game()
     wasMPressed   = false;
     enemiesRemainingToSpawn = 0;
     currentRoomIndex = 0;
-    activeSlot = 0;
     pendingMenuAction = MenuAction::NONE;
 
     std::srand(static_cast<unsigned>(std::time(nullptr)));
@@ -482,132 +478,6 @@ void Game::resetRun(bool resetSessionTimer) {
     lastMonsterBuffActive = false;
 }
 
-// ── Save / Load (slot-aware) ──────────────────────────────────────────────────
-void Game::saveGame(int slot) {
-    Player* playerPtr = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
-    if (!playerPtr) return;
-
-    SaveData sd;
-    sd.exists           = true;
-    sd.level            = playerPtr->getLevel();
-    sd.xp               = playerPtr->getXP();
-    sd.xpToNext         = playerPtr->getXPToNext();
-    sd.skillPoints      = playerPtr->getSkillPoints();
-    sd.secondChanceUsed = playerPtr->isSecondChanceUsed();
-    sd.totemCharges        = playerPtr->getTotemCharges();
-    sd.totemBoughtThisRun  = playerPtr->hasTotemThisRun();
-
-    for (int i = 0; i < SAVE_SKILL_COUNT; ++i)
-        sd.upgrades[i] = playerPtr->getUpgradeLevel(i);
-
-    sd.roomIndex   = currentRoomIndex;
-    sd.coins       = totalCoins;
-    sd.playTime    = playTime;
-    sd.roomCleared = rooms[currentRoomIndex]->getIsCleared();
-    sd.enemiesLeft = enemiesRemainingToSpawn;
-    sd.roomLayouts.clear();
-    sd.roomLayouts.reserve(rooms.size());
-    for (const auto& r : rooms)
-        sd.roomLayouts.push_back(r->getLayoutIndex());
-    sd.heldItem    = heldItem;
-    sd.fullscreen  = isFullscreen;
-    sd.musicVolume = musicVolume;
-    sd.sfxVolume   = sfxVolume;
-    sd.difficulty  = ActiveDifficulty::current;
-
-    SaveSystem::save(sd, slot);
-}
-
-void Game::loadGame(int slot) {
-    SaveData sd = SaveSystem::load(slot);
-    if (!sd.exists) {
-        std::cerr << "[Game] Load failed for slot " << slot << " — using starter room.\n";
-        return;
-    }
-
-    activeSlot = slot;
-    ActiveDifficulty::set(sd.difficulty);
-    Player::resetProgression();
-    resetRun();
-    if (!objects.empty()) {
-        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
-            p->applyLoadedSave(sd);
-    }
-    isFullscreen = sd.fullscreen;
-    musicVolume  = sd.musicVolume;
-    sfxVolume    = sd.sfxVolume;
-    applyWindowMode();
-    applyMusicVolume();
-    applySFXVolume();
-    heldItem   = sd.heldItem;
-    totalCoins = sd.coins;
-    playTime   = sd.playTime;
-
-    // Sync held item to the player so overlay textures load correctly
-    if (!objects.empty()) {
-        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
-            p->setHeldItem(heldItem);
-    }
-
-    applyLoadedRoomState(sd);
-}
-
-void Game::applyLoadedRoomState(const SaveData& sd) {
-    isBossRoom = false;
-
-    int room = sd.roomIndex;
-    if (room < 0) room = 0;
-
-    rooms.clear();
-    for (int i = 0; i <= room; ++i) {
-        int layout = 0;
-        if (!sd.roomLayouts.empty() && i < static_cast<int>(sd.roomLayouts.size()))
-            layout = sd.roomLayouts[static_cast<size_t>(i)];
-        else if (i == 0)
-            layout = 0;
-        else
-            layout = RoomTemplates::getRandomIndex();
-        buildRoomAt(i, layout);
-    }
-
-    currentRoomIndex = room;
-    isBossRoom = isBossRoomIndex(currentRoomIndex);
-
-    sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
-    if (!objects.empty()) {
-        if (auto* p = dynamic_cast<Player*>(objects[0].get()))
-            p->setPosition(startPos);
-    }
-
-    if (sd.roomCleared) {
-        enemiesRemainingToSpawn = 0;
-        rooms[currentRoomIndex]->setCleared(true);
-    } else {
-        rooms[currentRoomIndex]->setCleared(false);
-        if (isBossRoom) {
-            enemiesRemainingToSpawn = 0;
-        } else {
-            int fallback = enemiesForRoom(currentRoomIndex);
-            enemiesRemainingToSpawn = sd.enemiesLeft > 0 ? sd.enemiesLeft : fallback;
-            if (enemiesRemainingToSpawn <= 0)
-                enemiesRemainingToSpawn = fallback;
-        }
-    }
-
-    if (isBossRoom && !sd.roomCleared)
-        objects.push_back(std::make_unique<PigeonKing>(
-            200.f, 60.f, bossTierForRoom(currentRoomIndex)));
-
-    Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
-    rollVendingForPlayer(p);
-
-    if (!sd.roomCleared && !isBossRoom)
-        spawnPendingEnemiesAfterLoad();
-
-    lastMonsterBuffActive = p && p->hasMonsterBuff();
-    if (p && !heldItem.empty())
-        p->setHeldItem(heldItem);
-}
 
 void Game::rollVendingForPlayer(Player* player) {
     vendingUI.rollItems(player && player->hasTotemThisRun());
@@ -616,18 +486,6 @@ void Game::rollVendingForPlayer(Player* player) {
     pendingSpawns.clear();
 }
 
-void Game::spawnPendingEnemiesAfterLoad() {
-    if (isBossRoom || enemiesRemainingToSpawn <= 0) return;
-
-    int minW = 1;
-    int maxW = std::min(2 + currentRoomIndex / 3, 5);
-    std::uniform_int_distribution<int> wsd(minW, maxW);
-    int wc = std::min(wsd(rng), enemiesRemainingToSpawn);
-    for (int i = 0; i < wc; ++i) {
-        spawnEnemy();
-        enemiesRemainingToSpawn--;
-    }
-}
 
 void Game::syncHeldItemAfterMonsterBuff(Player* player) {
     if (!player || heldItem.empty()) return;
@@ -689,8 +547,8 @@ void Game::drawPauseMenu() {
         pauseTitle.setPosition(VIEW_W / 2.f - pauseTitle.getGlobalBounds().width / 2.f, 30.f);
         window.draw(pauseTitle);
 
-        std::vector<std::string> pauseItems = { "SAVE GAME", "OPTIONS", "QUIT" };
-        for (int i = 0; i < 3; ++i) {
+        std::vector<std::string> pauseItems = { "OPTIONS", "QUIT" };
+        for (int i = 0; i < 2; ++i) {
             sf::Text itemText(pauseItems[i], font, 16);
             if (i == pauseSel) {
                 itemText.setFillColor(sf::Color(255, 210, 50));
@@ -791,26 +649,15 @@ void Game::run() {
 
                 SlotUIResult result = slotUI.handleEvent(event);
                 if (result == SlotUIResult::SELECTED) {
-                    activeSlot = slotUI.getSelectedSlot();
-                    if (pendingMenuAction == MenuAction::LOAD_GAME) {
-                        loadGame(activeSlot);
-                    } else if (pendingMenuAction == MenuAction::NEW_GAME) {
-                        // Wipe the chosen slot and start a fresh run
-                        SaveSystem::deleteSlot(activeSlot);
-                        ActiveDifficulty::set(slotUI.getChosenDifficulty());
-                        Player::resetProgression();
-                        resetRun();
-                        pendingMenuAction = MenuAction::NONE;
-                        isPaused = false;
-                        pauseInOptions = false;
-                    } else {
-                        // SAVE from pause menu — just save to the chosen slot
-                        saveGame(activeSlot);
-                    }
+                    ActiveDifficulty::set(slotUI.getChosenDifficulty());
+                    Player::resetProgression();
+                    resetRun();
+                    pendingMenuAction = MenuAction::NONE;
+                    isPaused = false;
+                    pauseInOptions = false;
                     appState = AppState::PLAYING;
                 } else if (result == SlotUIResult::CANCELLED) {
-                    // If we came from the pause menu, return to playing; otherwise back to menu
-                    appState = (pendingMenuAction == MenuAction::NONE) ? AppState::PLAYING : AppState::MENU;
+                    appState = AppState::MENU;
                 }
                 continue;
             }
@@ -831,12 +678,7 @@ void Game::run() {
                 MenuAction action = mainMenu->handleEvent(event);
                 if (action == MenuAction::NEW_GAME) {
                     pendingMenuAction = MenuAction::NEW_GAME;
-                    slotUI.open(SlotUIMode::NEW_GAME);
-                    appState = AppState::SLOT_SELECT;
-                }
-                else if (action == MenuAction::LOAD_GAME) {
-                    pendingMenuAction = MenuAction::LOAD_GAME;
-                    slotUI.open(SlotUIMode::LOAD);
+                    slotUI.open();
                     appState = AppState::SLOT_SELECT;
                 }
                 else if (action == MenuAction::QUIT) {
@@ -889,18 +731,15 @@ void Game::run() {
                         } else {
                             // ── Main pause screen navigation ──────────────────
                             if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W)
-                                pauseSel = (pauseSel - 1 + 3) % 3;
+                                pauseSel = (pauseSel - 1 + 2) % 2;
                             if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S)
-                                pauseSel = (pauseSel + 1) % 3;
+                                pauseSel = (pauseSel + 1) % 2;
                             if (event.key.code == sf::Keyboard::E) {
                                 if (pauseSel == 0) {
-                                    pendingMenuAction = MenuAction::NONE;
-                                    slotUI.open(SlotUIMode::SAVE);
-                                    appState = AppState::SLOT_SELECT;
-                                    isPaused = false;
+                                    pauseInOptions = true;
+                                    pauseOptSel = 0;
                                 }
-                                else if (pauseSel == 1) { pauseInOptions = true; pauseOptSel = 0; }
-                                else if (pauseSel == 2) {
+                                else if (pauseSel == 1) {
                                     mainMenu = std::make_unique<MainMenu>(font, anySlotExists(), isFullscreen, musicVolume, sfxVolume);
                                     appState = AppState::MENU;
                                     isPaused = false;

@@ -58,9 +58,7 @@ private:
     HUD         hud;
     SkillTreeUI skillTree;
     VendingUI   vendingUI;
-    SaveSlotUI  slotUI;
-
-    int activeSlot = 0;
+    DifficultySelectUI  slotUI;
 
     bool wasMPressed;
 
@@ -165,10 +163,6 @@ private:
     void rollVendingForPlayer(Player* player);
     void syncHeldItemAfterMonsterBuff(Player* player);
 
-    void loadGame(int slot);
-    void saveGame(int slot);
-    void applyLoadedRoomState(const SaveData& sd);
-    void spawnPendingEnemiesAfterLoad();
 
     bool lastMonsterBuffActive = false;
     void drawScreenFadeOverlay(float elapsed, float fadeDelay, float fadeDuration);
