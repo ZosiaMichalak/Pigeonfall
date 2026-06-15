@@ -22,16 +22,18 @@ static constexpr float UI_BAR_Y = 195.f;
 // Distance within which [E] prompt appears and vending can be opened
 static constexpr float VENDING_INTERACT_DIST = 30.f;
 
-// ── Utility ───────────────────────────────────────────────────────────────────
+// ── Utility Helpers ───────────────────────────────────────────────────────────
+// Calculates the coordinates of the center point of a FloatRect.
 static sf::Vector2f getRectCenter(const sf::FloatRect& r) {
     return { r.left + r.width / 2.f, r.top + r.height / 2.f };
 }
 
-// Returns true if ANY of the 3 save slots has data
+// Returns true if ANY of the 3 save slots has data (always false since save system was removed)
 static bool anySlotExists() {
     return false;
 }
 
+// Formats a float value representing seconds into a displayable HH:MM:SS string.
 static void formatPlayTime(float seconds, char* buf, std::size_t bufSize) {
     int totalSec = static_cast<int>(seconds);
     int h  = totalSec / 3600;
@@ -43,10 +45,12 @@ static void formatPlayTime(float seconds, char* buf, std::size_t bufSize) {
         std::snprintf(buf, bufSize, "%d:%02d", m, sc);
 }
 
+// Determines the boss difficulty tier based on the room index (strong for final, weak for mid-boss).
 static PigeonBossTier bossTierForRoom(int roomIndex) {
     return roomIndex == 50 ? PigeonBossTier::STRONG : PigeonBossTier::WEAK;
 }
 
+// Calculates dynamic coin reward drops using active difficulty settings.
 static int scaledCoinDrop(int baseDrop) {
     const auto& diff = ActiveDifficulty::settings;
     int n = static_cast<int>(std::round(baseDrop * diff.coinDropMult));
@@ -54,6 +58,7 @@ static int scaledCoinDrop(int baseDrop) {
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
+// Configures initial member states, loads shared game-wide assets, and boots main menu.
 Game::Game()
     : hud(font), skillTree(font), vendingUI(font), slotUI(font),
       totalCoins(50), nearVending(false),
@@ -69,6 +74,7 @@ Game::Game()
     currentRoomIndex = 0;
     pendingMenuAction = MenuAction::NONE;
 
+    // Seed standard random number generators
     std::srand(static_cast<unsigned>(std::time(nullptr)));
     rng.seed(static_cast<unsigned>(std::time(nullptr)));
 
@@ -80,6 +86,7 @@ Game::Game()
     refreshFontTextures();
 
     // ── Pre-load shared assets ────────────────────────────────────────────────
+    // Keeps performance smooth by loading common assets before room instantiation
     Bench::loadTexture();
     Vending::loadTexture();
     Trash::loadTexture();
@@ -103,12 +110,13 @@ Game::Game()
         std::cerr << "[Warning] Track12.wav not found — no music.\n";
     }
 
+    // Configure fallback button interaction prompt
     interactText.setFont(font);
     interactText.setCharacterSize(18);
     interactText.setFillColor(sf::Color::White);
     interactText.setString("[E]");
 
-    // Door — sprite is 50x80, two 50x40 frames stacked vertically (locked | open)
+    // Setup door/tram geometry (locked/open states represented visually)
     doorShape.setSize(sf::Vector2f(100.f, 80.f));
     doorShape.setOrigin(50.f, 40.f);
     doorShape.setFillColor(sf::Color::Transparent);
@@ -126,7 +134,7 @@ Game::Game()
         0, RoomTemplates::getByIndex(0), 0));
     rooms[0]->loadAssets();
 
-    // Starter room has no enemies and is immediately cleared
+    // Starter room has no enemies and is cleared by default
     rooms[0]->setCleared(true);
     enemiesRemainingToSpawn = 0;
 
@@ -409,14 +417,17 @@ void Game::configureBossRoom() {
 }
 
 // ── Next room ─────────────────────────────────────────────────────────────────
+// Advances the active room level, builds layouts, shifts the player, and handles spawning.
 void Game::nextRoom() {
     currentRoomIndex++;
 
+    // Dynamically build a new room if the index exceeds pre-built configurations
     if (currentRoomIndex >= static_cast<int>(rooms.size()))
         buildRoomAt(currentRoomIndex, RoomTemplates::getRandomIndex());
 
     sf::Vector2f startPos = rooms[currentRoomIndex]->getPlayerStart();
 
+    // Relocate player to the starting position of the new room layout, discarding other objects
     std::vector<std::unique_ptr<GameObject>> newObjects;
     auto it = std::find_if(objects.begin(), objects.end(),
                            [](const auto& o){ return dynamic_cast<Player*>(o.get()) != nullptr; });
@@ -431,20 +442,24 @@ void Game::nextRoom() {
     isBossRoom = false;
     enemiesRemainingToSpawn = enemiesForRoom(currentRoomIndex);
 
+    // If the room index points to a boss encounter, configure the arena and spawn Pigeon King
     if (isBossRoomIndex(currentRoomIndex))
         configureBossRoom();
 
+    // Re-roll shop items for the new room's vending machine
     Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
     rollVendingForPlayer(p);
 }
 
 // ── Reset run ─────────────────────────────────────────────────────────────────
+// Resets all stats and variables to start a clean new run from the first room.
 void Game::resetRun(bool resetSessionTimer) {
     Player::resetRunStats();
 
     pendingSpawns.clear();
     damageNumbers.clear();
 
+    // Wipe room registry and spawn a fresh starting room (which is pre-cleared)
     rooms.clear();
     rooms.push_back(std::make_unique<Room>(
         0, RoomTemplates::getByIndex(0), 0));
@@ -455,6 +470,7 @@ void Game::resetRun(bool resetSessionTimer) {
     enemiesRemainingToSpawn = 0;
     isBossRoom              = false;
     totalCoins              = 50;
+    
     if (resetSessionTimer) {
         playTime   = 0.f;
         deathCount = 0;
@@ -468,17 +484,19 @@ void Game::resetRun(bool resetSessionTimer) {
     wasFPressed   = false;
     wasMPressed   = false;
 
+    // Instantiate a fresh player object at the starting coordinates
     objects.clear();
     const auto& startTmpl = RoomTemplates::getByIndex(0);
     objects.push_back(std::make_unique<Player>(
         startTmpl.playerStart.x, startTmpl.playerStart.y));
 
+    // Reset vending machine roll variables
     Player* p = objects.empty() ? nullptr : dynamic_cast<Player*>(objects[0].get());
     rollVendingForPlayer(p);
     lastMonsterBuffActive = false;
 }
 
-
+// Re-rolls item choices inside the vending machine shop.
 void Game::rollVendingForPlayer(Player* player) {
     vendingUI.rollItems(player && player->hasTotemThisRun());
     vendingUI.close();
@@ -486,7 +504,7 @@ void Game::rollVendingForPlayer(Player* player) {
     pendingSpawns.clear();
 }
 
-
+// RESTORE: Re-applies the visually held item sprite onto the player after their monster buff ends.
 void Game::syncHeldItemAfterMonsterBuff(Player* player) {
     if (!player || heldItem.empty()) return;
     player->setHeldItem(heldItem);
@@ -986,6 +1004,7 @@ void Game::update(float dt) {
     }
 
     // ── Keep player inside play area ──────────────────────────────────────────
+    // Clamps the player's Y position to stay above the bottom UI bar
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         if (pb.top + pb.height > UI_BAR_Y)
@@ -993,6 +1012,7 @@ void Game::update(float dt) {
     }
 
     // ── Player vs prop collision ───────────────────────────────────────────────
+    // Resolves overlaps against solid props using simple axis-aligned minimum translation vector pushing
     if (playerPtr && playerPtr->isActive()) {
         sf::FloatRect pb = playerPtr->getBounds();
         for (const sf::FloatRect& col : rooms[currentRoomIndex]->getPropColliders()) {
@@ -1004,6 +1024,8 @@ void Game::update(float dt) {
             float minH = (overlapL < overlapR) ? -overlapL :  overlapR;
             float minV = (overlapT < overlapB) ? -overlapT :  overlapB;
             sf::Vector2f centre = getRectCenter(pb);
+            
+            // Push player out on the axis with the smallest overlap
             if (std::abs(minH) < std::abs(minV))
                 playerPtr->setPosition({centre.x + minH, centre.y});
             else
@@ -1013,6 +1035,7 @@ void Game::update(float dt) {
     }
 
     // ── Enemy vs prop collision ───────────────────────────────────────────────
+    // Resolves solid prop overlaps for enemies to prevent clipping
     const auto& propColliders = rooms[currentRoomIndex]->getPropColliders();
     for (auto& obj : objects) {
         auto* enemy = dynamic_cast<Enemy*>(obj.get());
@@ -1036,6 +1059,7 @@ void Game::update(float dt) {
     }
 
     // ── AnnoyingDog vs prop collision ─────────────────────────────────────────
+    // Resolves solid prop overlaps for active helper dog companion entities
     for (auto& obj2 : objects) {
         auto* dog = dynamic_cast<AnnoyingDog*>(obj2.get());
         if (!dog || !dog->isActive()) continue;

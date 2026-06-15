@@ -9,6 +9,7 @@
 
 enum class DogState { WALK, WINDUP, EXPLODING };
 
+// Companion/Item entity that walks towards the nearest enemy, winds up, and explodes dealing massive damage.
 class AnnoyingDog : public GameObject {
 public:
     AnnoyingDog(float x, float y);

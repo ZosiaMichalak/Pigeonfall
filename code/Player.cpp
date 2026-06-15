@@ -11,6 +11,7 @@
 static constexpr float PI = 3.14159265f;
 
 // ── Statics ───────────────────────────────────────────────────────────────────
+// These values persist across individual room loads to maintain state/progression.
 int                          Player::persistentXP               = 0;
 int                          Player::persistentLevel            = 1;
 int                          Player::persistentSkillPoints      = 0;
@@ -21,14 +22,16 @@ int                          Player::persistentTotemCharges     = 0;
 bool                         Player::persistentTotemBoughtThisRun = false;
 
 // ── Constructor ───────────────────────────────────────────────────────────────
+// Loads textures, reads persistent stats, configures initial values, and sets fallback shapes.
 Player::Player(float x, float y) : GameObject(x, y) {
+    // Attempt to load all animation sheet textures
     hasIdleTexture   = textureIdle.loadFromFile("assets/player_idle.png");
     hasWalkTexture   = textureWalk.loadFromFile("assets/player_walk.png");
     hasAttackTexture = textureAttack.loadFromFile("assets/player_attack.png");
     hasDashTexture   = textureDash.loadFromFile("assets/player_dash.png");
     hasDieTexture    = textureDie.loadFromFile("assets/player_die.png");
     
-    // Wczytanie slasha
+    // Load the sword slash sweep overlay texture
     hasSlashTexture = slashTexture.loadFromFile("assets/slash.png");
     if (hasSlashTexture) {
         slashSprite.setTexture(slashTexture);
@@ -36,10 +39,11 @@ Player::Player(float x, float y) : GameObject(x, y) {
         slashCols = 2;
         slashFrameWidth = 32;
         slashFrameHeight = 32;
-        // Origin na środku lewej krawędzi (oryginalne ustawienie)
+        // Set origin to middle-left edge for proper swinging orientation
         slashSprite.setOrigin(0.f, slashFrameHeight / 2.f); 
     }
 
+    // Restore progression statistics from persistent storage variables
     xp            = persistentXP;
     level         = persistentLevel;
     skillPoints   = persistentSkillPoints;
@@ -52,10 +56,11 @@ Player::Player(float x, float y) : GameObject(x, y) {
     facingLeft         = false;
     baseSpeed          = 150.f;
 
+    // Apply stats from purchased upgrades and fill HP
     applySkillStats();
     hp = maxHp;
 
-    // Start w stanie IDLE
+    // Initialize default IDLE animation state
     frameWidth     = 51;
     frameHeight    = 32;
     animationTimer = 0.f;
@@ -73,21 +78,25 @@ Player::Player(float x, float y) : GameObject(x, y) {
         sprite.setPosition(position);
         applyFacingScale();
     } else {
+        // Fallback shape setup
         fallbackShape.setSize({10.f, 10.f});
         fallbackShape.setFillColor(sf::Color(0, 120, 255));
         fallbackShape.setOrigin(5.f, 5.f);
         fallbackShape.setPosition(position);
     }
 
+    // Initialize dash timers
     isDashing         = false;
     dashDuration      = 0.2f;
     dashCooldownTimer = 0.f;
     dashTimer         = 0.f;
 
+    // Initialize special Monster Energy items properties
     monsterBuffTimer    = 0.f;
     monsterBuffBaseSpeed = 0.f;
     monsterOneHitKill   = false;
 
+    // Initialize combat timers and variables
     isAttacking         = false;
     attackTimer         = 0.f;
     attackDuration      = 0.32f;
@@ -95,25 +104,28 @@ Player::Player(float x, float y) : GameObject(x, y) {
     attackCooldownMax   = 0.35f;
     attackAngle         = 0.f;
 
+    // Combo system counters
     comboCount          = 0;
     comboSwingCount     = 0;
     comboWindowTimer    = 0.f;
     comboLockoutTimer   = 0.f;
     hitConnectedThisSwing = false;
 
-    // Niewidzialny hitbox
+    // Configure the invisible physics collision hitbox for sword attacks
     swordHitbox.setSize(sf::Vector2f(26.f, 18.f));
     swordHitbox.setFillColor(sf::Color(255, 255, 200, 130));
     swordHitbox.setOrigin(0.f, 9.f);
 }
 
 // ── Animation state switch ────────────────────────────────────────────────────
+// Swap textures and configures layout dimensions depending on the requested state.
 void Player::setAnim(AnimState anim) {
     if (anim == AnimState::DIE)
         monsterWalkLocked = false;
 
     if (currentAnim == anim) return;
-    // During monster buff: block switching away from WALK (except DASH / death)
+    
+    // Prevent switching away from the Monster walk animation unless dashing or dying
     if (monsterWalkLocked && currentAnim == AnimState::WALK &&
         anim != AnimState::DASH && anim != AnimState::WALK && anim != AnimState::DIE)
         return;
@@ -134,7 +146,7 @@ void Player::setAnim(AnimState anim) {
         }
         break;
     case AnimState::IDLE:
-        // Monster buff: stay on monster mode even when idle
+        // Force monster walk mode display if active, even while stationary
         if (monsterWalkLocked && hasMonsterModeTexture) {
             currentAnim = AnimState::IDLE;
             return;
@@ -182,12 +194,10 @@ void Player::setAnim(AnimState anim) {
         break;
 
     case AnimState::ATTACK:
-        // Monster buff: keep monster mode texture, never switch away
         if (monsterWalkLocked && hasMonsterModeTexture) {
-            // Stay on monster mode — don't touch texture or frame params
-            // Just update currentAnim so the caller knows we're attacking
+            // Retain the monster texture parameters during combat
             currentAnim = AnimState::ATTACK;
-            return; // skip setOrigin below — already set correctly
+            return; 
         } else {
             if (!hasAttackTexture) return;
             sprite.setTexture(textureAttack);
@@ -202,22 +212,30 @@ void Player::setAnim(AnimState anim) {
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
+// Calculates stat values (HP limits, speeds, damage, cooldowns) from upgrade skill levels.
 void Player::applySkillStats() {
     const DifficultySettings& diff = ActiveDifficulty::settings;
 
+    // Movement speed increases with SPEED skill level
     speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
+    
+    // HP limits scale with upgrades and difficulty
     maxHp = static_cast<int>(std::round((5 + persistentUpgrades[SK_HEALTH]) * diff.playerHpMult));
     if (maxHp < 1) maxHp = 1;
 
+    // Attack damage increases with upgrades
     attackDamage = 1 + persistentUpgrades[SK_ATTACK];
 
+    // Attack cooldown values decrease with ATK_SPEED level
     float atkMod = std::max(0.1f, 1.f - persistentUpgrades[SK_ATK_SPEED] * 0.15f);
     attackCooldownMax = 0.35f * atkMod;
 
+    // Dash cooldown decreases with levels
     float dshMod = std::max(0.1f, 1.f - persistentUpgrades[SK_DASH_CD] * 0.15f);
     dashCooldown = 1.0f * dshMod;
 }
 
+// Increases XP, level-up handles point rewards and scaling target requirements.
 void Player::addXP(int amount) {
     xp += amount;
     while (xp >= xpToNextLevel) {
@@ -233,10 +251,12 @@ void Player::addXP(int amount) {
     persistentXpToNext    = xpToNextLevel;
 }
 
+// Check constraints before buying upgrades
 bool Player::canBuySkill(int id) const {
     return skillPoints > 0 && persistentUpgrades[id] < SKILL_DEFS[id].maxLevel;
 }
 
+// Purchases an upgrade, consumes skill points, adjusts stats, and heals minor HP.
 void Player::buySkill(int id) {
     if (!canBuySkill(id)) return;
     skillPoints--;
@@ -248,6 +268,7 @@ void Player::buySkill(int id) {
 }
 
 // ── Damage / death ────────────────────────────────────────────────────────────
+// Inflicts damage, applying invincibility frames unless immune/dead/buffed.
 void Player::takeDamage(int amount) {
     if (isInvincible || isDashing || isDead || monsterBuffTimer > 0.f) return;
     hp -= amount;
@@ -256,6 +277,7 @@ void Player::takeDamage(int amount) {
     if (hp <= 0) { hp = 0; isDead = true; }
 }
 
+// Triggers death state, resets triggers, and starts playing die animation sheet.
 void Player::startDeathAnimation() {
     isDashing    = false;
     isAttacking  = false;
@@ -265,6 +287,7 @@ void Player::startDeathAnimation() {
     setAnim(AnimState::DIE);
 }
 
+// Advances frames for the death sequence sheets.
 void Player::updateDeathAnimation(float dt) {
     if (currentAnim != AnimState::DIE) return;
 
@@ -292,10 +315,12 @@ void Player::updateDeathAnimation(float dt) {
     }
 }
 
+// Restores full HP capacity.
 void Player::healFull() {
     hp = maxHp;
 }
 
+// Selects a random visual flavor index for the Monster Energy variant.
 void Player::assignRandomMonsterEnergyVariant() {
     static constexpr int kMaxProbe = 4;
     std::vector<int> available;
@@ -310,6 +335,7 @@ void Player::assignRandomMonsterEnergyVariant() {
         monsterVariant = available[static_cast<size_t>(std::rand()) % available.size()];
 }
 
+// Triggers special monster energy buff (super speed, one-hit kills, visual changes).
 void Player::applyMonsterBuff() {
     if (monsterVariant <= 0)
         assignRandomMonsterEnergyVariant();
@@ -321,7 +347,7 @@ void Player::applyMonsterBuff() {
     speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f + 200.f;
     hp = std::min(hp + 1, maxHp);
 
-    // Load the dedicated monster-mode animation — overrides walk/attack
+    // Load dedicated monster-mode animation spritesheet
     if (textureMonsterMode.loadFromFile("assets/player_monsterMode.png")) {
         textureMonsterMode.setSmooth(false);
         hasMonsterModeTexture = true;
@@ -339,6 +365,7 @@ void Player::applyMonsterBuff() {
     }
 }
 
+// Loads visual textures corresponding to items currently held/carried by the player.
 void Player::loadHeldTextures(const std::string& item) {
     if (item == loadedHeldItem && !item.empty()) return; // already loaded
     loadedHeldItem = item;
@@ -374,6 +401,7 @@ void Player::loadHeldTextures(const std::string& item) {
     if (hasHeldWalk) textureHeldWalk.setSmooth(false);
 }
 
+// Binds the active held item and forces an animation sheet update.
 void Player::setHeldItem(const std::string& item) {
     // Monster buff variant is already chosen in applyMonsterBuff
     if (item != "Monster Energy") {
@@ -389,14 +417,17 @@ void Player::setHeldItem(const std::string& item) {
     }
 }
 
+// Persistent totem bought trigger
 void Player::markTotemPurchased() {
     persistentTotemBoughtThisRun = true;
 }
 
+// Totem charge counts
 void Player::addTotemCharge() {
     persistentTotemCharges++;
 }
 
+// Second Chance: resurrection logic (restores HP, grants invincibility, decreases totem charges).
 bool Player::consumeSecondChance() {
     if (persistentUpgrades[SK_SECOND_CHANCE] > 0 && !persistentSecondChanceUsed) {
         hp = maxHp;
@@ -419,6 +450,7 @@ bool Player::consumeSecondChance() {
     return false;
 }
 
+// Reset temporary settings on a new game run.
 void Player::resetRunStats() {
     persistentSecondChanceUsed   = false;
     persistentTotemCharges       = 0;
@@ -426,6 +458,7 @@ void Player::resetRunStats() {
     // XP, level, skill points, and upgrades intentionally persist across deaths (same save)
 }
 
+// Hard wipe of all levels, skills, and progress.
 void Player::resetProgression() {
     persistentXP               = 0;
     persistentLevel            = 1;
@@ -438,17 +471,19 @@ void Player::resetProgression() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// Updates visual scale factor for left/right facing sprite mirroring.
 void Player::applyFacingScale() {
     sprite.setScale(facingLeft ? 1.f : -1.f, 1.f);
 }
 
+// Set coordinates for sprite/shape positioning.
 void Player::setPosition(const sf::Vector2f& newPos) {
     position = newPos;
     if (hasIdleTexture) sprite.setPosition(position);
     else                fallbackShape.setPosition(position);
 }
 
-//Hitbox
+// Returns the player's collision bounds.
 sf::FloatRect Player::getBounds() const {
     constexpr float W = 16.f, H = 14.f;
     if (hasIdleTexture)
@@ -457,11 +492,12 @@ sf::FloatRect Player::getBounds() const {
 }
 
 // ── Attack ────────────────────────────────────────────────────────────────────
+// Processes weapon swing triggers, tracks swing durations, and calculates slash sheet frames.
 void Player::updateAttack(float dt, sf::RenderWindow& window) {
     if (attackCooldownTimer > 0.f) attackCooldownTimer -= dt;
     if (comboLockoutTimer > 0.f)  comboLockoutTimer  -= dt;
 
-    // Tick the combo expiry window
+    // Reset combos if the time window expires
     if (comboWindowTimer > 0.f) {
         comboWindowTimer -= dt;
         if (comboWindowTimer <= 0.f) {
@@ -470,6 +506,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
         }
     }
 
+    // Trigger slash swing on Left Click
     if (sf::Mouse::isButtonPressed(sf::Mouse::Left) &&
         !isAttacking && attackCooldownTimer <= 0.f && comboLockoutTimer <= 0.f)
     {
@@ -484,6 +521,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
         attackCooldownTimer   = attackCooldownMax;
         hitConnectedThisSwing = false; // reset per-swing hit flag
 
+        // Calculate attack angle relative to mouse cursor coordinates
         sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
         sf::Vector2f delta    = mousePos - position;
         attackAngle = std::atan2(delta.y, delta.x) * 180.f / PI;
@@ -497,17 +535,19 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 
         float rad = attackAngle * PI / 180.f;
 
-        // ZAWSZE aktualizuj niewidzialny hitbox do kolizji
+        // Position and rotate the invisible attack hit registration box
         swordHitbox.setRotation(attackAngle);
         swordHitbox.setPosition(position.x + std::cos(rad) * 6.f,
                                 position.y + std::sin(rad) * 6.f);
 
+        // Position, scale, and slice frames for the slash visual sweep overlay
         if (hasSlashTexture) {
             slashSprite.setRotation(attackAngle); 
             slashSprite.setPosition(position.x + std::cos(rad) * 6.f,
                                     position.y + std::sin(rad) * 6.f);
 
-            // ─── NOWA LOGIKA PING-PONG ───────────────────────────────────────
+            // ─── PING-PONG ANIMATION LOGIC ───────────────────────────────────
+            // Maps the swing duration forward then backward to simulate a sweep
             float timeElapsed = attackDuration - attackTimer;
             
             // Dla 6 klatek mamy 11 kroków: do przodu (6) i z powrotem (5)
@@ -526,7 +566,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
             }
             // ─────────────────────────────────────────────────────────────────
 
-            // Wycinanie odpowiedniej klatki z siatki
+            // Slice out texture rect grid coordinates
             int col = currentSlashFrame % slashCols;
             int row = currentSlashFrame / slashCols;
 
@@ -537,6 +577,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
                 slashFrameHeight
             ));
 
+            // Flip slash orientation horizontally based on mouse vector
             if (attackAngle > 90.f || attackAngle < -90.f) {
                 slashSprite.setScale(1.f, -1.f);
             } else {
@@ -544,6 +585,7 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
             }
         }
 
+        // Return to idle state when swing finishes
         if (attackTimer <= 0.f) {
             isAttacking = false;
             if (comboSwingCount >= 3) {
@@ -559,12 +601,15 @@ void Player::updateAttack(float dt, sf::RenderWindow& window) {
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
+// Main Game Update: checks keys, coordinates movements, checks dashes, limits borders, ticks frames.
 void Player::update(float dt, sf::RenderWindow& window) {
     if (isDead) return;
 
+    // Monster buff duration countdown
     if (monsterBuffTimer > 0.f) {
         monsterBuffTimer -= dt;
         if (monsterBuffTimer <= 0.f) {
+            // Restore regular speeds and variables when buff expires
             speed = baseSpeed + persistentUpgrades[SK_SPEED] * 20.f;
             monsterOneHitKill = false;
             monsterWalkLocked = false;
@@ -580,6 +625,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
 
     updateAttack(dt, window);
 
+    // Invincibility ticks
     if (isInvincible) {
         invincibilityTimer -= dt;
         if (invincibilityTimer <= 0.f) isInvincible = false;
@@ -588,6 +634,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
     sf::Vector2f moveDir(0.f, 0.f);
     if (dashCooldownTimer > 0.f) dashCooldownTimer -= dt;
 
+    // Process movements and dash states
     if (isDashing) {
         if (currentAnim != AnimState::ATTACK)
             setAnim(AnimState::DASH);
@@ -602,6 +649,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
         }
     } else {
         bool movingX = false, movingY = false;
+        // W/A/S/D Keyboard input mappings
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) { moveDir.y -= 1.f; movingY = true; }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) { moveDir.y += 1.f; movingY = true; }
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) { moveDir.x -= 1.f; facingLeft = true;  movingX = true; }
@@ -624,17 +672,18 @@ void Player::update(float dt, sf::RenderWindow& window) {
             }
         }
 
+        // Space key triggers dash
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space)) startDash(moveDir);
     }
 
-    // Border clamping
+    // Border clamps: restrict players within arena edges
     if (position.x < 12.f)         position.x = 12.f;
     if (position.x > 388.f)        position.x = 388.f;
     if (position.y < 12.f)         position.y = 12.f;
     if (position.y > 225.f - 40.f) position.y = 225.f - 40.f;
 
     // ── Advance animation frame ───────────────────────────────────────────────
-    // If monster mode is active, keep its texture locked on the sprite
+    // Retain locked monster mode visual texture parameters if active
     if (hasMonsterModeTexture && sprite.getTexture() != &textureMonsterMode) {
         sprite.setTexture(textureMonsterMode);
         frameWidth = 51; frameHeight = 32;
@@ -643,6 +692,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
         sprite.setOrigin(frameWidth / 2.f, frameHeight / 2.f);
     }
 
+    // Accumulate time and cycle current sprite sheet layout column offsets
     animationTimer += dt;
     if (animationTimer >= frameDuration) {
         animationTimer -= frameDuration;
@@ -664,6 +714,7 @@ void Player::update(float dt, sf::RenderWindow& window) {
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
+// Renders the player sprite (handles invincibility blinking effects) and attack sweeps.
 void Player::draw(sf::RenderWindow& window) {
     if (currentAnim == AnimState::DIE) {
         if (hasDieTexture || hasIdleTexture)
@@ -674,6 +725,7 @@ void Player::draw(sf::RenderWindow& window) {
     }
 
     if (hasIdleTexture) {
+        // Blink visual sprite during invincibility frames
         bool visible = !isInvincible ||
                        (static_cast<int>(invincibilityTimer / 0.1f) % 2 == 0);
         if (visible) window.draw(sprite);

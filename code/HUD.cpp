@@ -1,3 +1,12 @@
+/*
+g++ -std=c++17 -DSFML_STATIC `
+  code\*.cpp `
+  -I SFML-2.5.1\include `
+  -L SFML-2.5.1\lib `
+  -o Gra.exe `
+  -lsfml-graphics-s -lsfml-window-s -lsfml-audio-s -lsfml-system-s `
+  -lopengl32 -lwinmm -lgdi32 -lfreetype -lopenal32 -lflac -lvorbisenc -lvorbisfile -lvorbis -logg
+*/
 #include "HUD.h"
 #include "Player.h"
 #include <algorithm>
@@ -7,19 +16,20 @@
 static constexpr float BAR_Y = 195.f;
 static constexpr float BAR_H = 30.f;
 
-// Funkcja pomocnicza zaokrąglająca do najbliższego pełnego piksela
+// Helper function rounding coordinates to the nearest pixel to prevent blurriness.
 static inline float px(float v) { return std::floor(v + 0.5f); }
 
+// Configures font texture settings to ensure sharp rendering for specific sizes.
 static void sharpFont(sf::Font& font) {
-    // Zachowujemy wyłączenie wygładzania dla kluczowych rozmiarów w teksturze
     for (unsigned sz : {9u, 12u, 13u, 14u, 16u, 18u, 20u, 24u})
         const_cast<sf::Texture&>(font.getTexture(sz)).setSmooth(false);
 }
 
+// Constructor: sets up text colors, native font sizes, and loads the spinning coin texture.
 HUD::HUD(sf::Font& font) : font(font), coinIconFrame(0), coinIconTimer(0.f) {
     sharpFont(font);
     
-    // Zawsze używamy natywnego rozmiaru dla m5x7, czyli 16, by uniknąć zniekształceń!
+    // Set standard size 16 (matches native m5x7 resolution)
     roomText.setFont(font);
     roomText.setCharacterSize(16); 
     roomText.setFillColor(sf::Color(200, 200, 200));
@@ -36,29 +46,29 @@ HUD::HUD(sf::Font& font) : font(font), coinIconFrame(0), coinIconTimer(0.f) {
     }
 }
 
+// Draws the main bottom HUD layout: renders HP bar, level, XP progress, current room number, gold coins count, and the active skills toggle hint.
 void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins) {
     sharpFont(font);
     
-    // 1. Tło dolnego paska HUD
+    // 1. Draw HUD panel background rectangle
     sf::RectangleShape bar({400.f, BAR_H});
     bar.setFillColor(sf::Color(10, 12, 22));
     bar.setPosition(0.f, px(BAR_Y));
     window.draw(bar);
 
-    // Krawędź oddzielająca świat gry od HUD
+    // Draw top separator border line
     sf::RectangleShape line({400.f, 1.f});
     line.setFillColor(sf::Color(40, 45, 60));
     line.setPosition(0.f, px(BAR_Y));
     window.draw(line);
 
-    // Pozycja startowa dla elementów po prawej stronie
     float rightSideX = 330.f;
 
-    // 2. Statystyki gracza (HP, LVL, XP)
+    // 2. Render Player stats (HP Bar, Second-Chance indicator, Level, XP bar)
     if (player && player->isActive()) {
         Player* p = player;
 
-        // Pasek Życia (HP) - rysowany najpierw jako tło
+        // Health Bar (HP) background
         float hpPct = (p->getMaxHp() > 0) ? std::min(1.f, static_cast<float>(p->getHp()) / p->getMaxHp()) : 0.f;
 
         sf::RectangleShape hpBack({80.f, 8.f});
@@ -66,6 +76,7 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
         hpBack.setPosition(10.f, px(BAR_Y + 4.f));
         window.draw(hpBack);
 
+        // Fill HP Bar according to percentage remaining
         if (hpPct > 0.f) {
             sf::RectangleShape hpFill({px(80.f * hpPct), 8.f});
             hpFill.setFillColor(sf::Color(220, 40, 40));
@@ -73,23 +84,20 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
             window.draw(hpFill);
         }
 
-        // Tekst HP - WYOSTTRZONY I WYŚRODKOWANY (Natywny rozmiar 16, przeskalowany do połowy)
+        // Draw HP value text over the center of the bar
         sf::Text hpText(std::to_string(p->getHp()) + "/" + std::to_string(p->getMaxHp()), font, 16);
         hpText.setScale(0.5f, 0.5f);
         hpText.setFillColor(sf::Color::White);
         
-        // getGlobalBounds jest kluczowe, bo użyliśmy setScale!
         sf::FloatRect hpTextBounds = hpText.getGlobalBounds();
         float hpTextX = px(10.f + (80.f - hpTextBounds.width) / 2.f);
         float hpTextY = px(BAR_Y + 2.f);
         hpText.setPosition(hpTextX, hpTextY);
         window.draw(hpText);
 
-        // Second-Chance / Totem dots
-        // Skill SC: 1 dot (yellow if active, grey if used)
-        // Each totem charge: 1 extra yellow dot (disappears when consumed)
+        // Render second-chance skill / totem dots to track revive availability
         {
-            float dotX = 96.f; // just right of the HP bar (10 + 80 + 6)
+            float dotX = 96.f; 
             float dotY = px(BAR_Y + 4.f);
             float dotR = 3.f;
 
@@ -98,6 +106,7 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
                 sf::CircleShape dot(dotR);
                 dot.setOrigin(dotR, dotR);
                 dot.setPosition(dotX + dotR, dotY + dotR);
+                // Gray out dot if the second chance revive has been consumed
                 dot.setFillColor(p->isSecondChanceUsed()
                     ? sf::Color(90, 90, 90) : sf::Color(255, 210, 30));
                 dot.setOutlineThickness(0.5f);
@@ -106,6 +115,7 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
                 dotX += dotR * 2.f + 3.f;
             }
 
+            // Draw a dot for each extra totem revive charge held
             int totemCharges = p->getTotemCharges();
             for (int t = 0; t < totemCharges; ++t) {
                 sf::CircleShape dot(dotR);
@@ -119,14 +129,14 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
             }
         }
 
-        // Tekst Poziomu (LVL) - rozmiar 16, skalowany do 0.75 by wyglądał jak dawne 12
+        // Render player level (LVL) label
         sf::Text lvlText("LVL: " + std::to_string(p->getLevel()), font, 16);
         lvlText.setScale(0.75f, 0.75f);
         lvlText.setFillColor(sf::Color(200, 200, 200));
         lvlText.setPosition(10.f, px(BAR_Y + 16.f));
         window.draw(lvlText);
 
-        // Pasek Doświadczenia (XP)
+        // Experience (XP) bar rendering
         float xpStartX = px(lvlText.getPosition().x + lvlText.getGlobalBounds().width + 10.f);
         float xpWidth  = px(rightSideX - xpStartX - 15.f);
 
@@ -148,9 +158,9 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
         }
     }
 
-    // 3. Numer pokoju oraz Monetki
+    // 3. Render current room number and gold coins count
     roomText.setString("ROOM: " + std::to_string(roomId + 1));
-    roomText.setPosition(px(rightSideX), px(BAR_Y - 2.f)); // Lekko podniesione dla rozmiaru 16
+    roomText.setPosition(px(rightSideX), px(BAR_Y - 2.f)); 
     window.draw(roomText);
 
     coinText.setString(std::to_string(coins));
@@ -168,17 +178,18 @@ void HUD::render(sf::RenderWindow& window, Player* player, int roomId, int coins
     }
     window.draw(coinText);
 
-    // 4. [Tab] Skills hint — fixed anchor; held-item label sits to the right of it
+    // 4. Render control hint for active skill tree toggle
     if (player && player->isActive()) {
         bool hasPoints = player->getSkillPoints() > 0;
         sf::Text skillsHint("[Tab] Skills", font, 16);
         skillsHint.setScale(0.75f, 0.75f);
+        // Highlight in yellow if player has unspent skill points
         skillsHint.setFillColor(hasPoints ? sf::Color(255, 210, 30) : sf::Color(120, 120, 120));
         skillsHint.setPosition(px(150.f), px(BAR_Y + 1.f));
         window.draw(skillsHint);
     }
 }
 
-void HUD::renderSkillsHint(sf::RenderWindow& window, Player* player) {
-    // Usunięto kod rysujący podpowiedź skilli (rysowana w render() dla uproszczenia układu)
+// Draw skill tree hint (Unused: code has been relocated directly into HUD::render).
+void HUD::renderSkillsHint(sf::RenderWindow& /*window*/, Player* /*player*/) {
 }

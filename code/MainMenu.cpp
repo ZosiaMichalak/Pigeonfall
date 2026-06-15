@@ -1,3 +1,12 @@
+/*
+g++ -std=c++17 -DSFML_STATIC `
+  code\*.cpp `
+  -I SFML-2.5.1\include `
+  -L SFML-2.5.1\lib `
+  -o Gra.exe `
+  -lsfml-graphics-s -lsfml-window-s -lsfml-audio-s -lsfml-system-s `
+  -lopengl32 -lwinmm -lgdi32 -lfreetype -lopenal32 -lflac -lvorbisenc -lvorbisfile -lvorbis -logg
+*/
 #include "MainMenu.h"
 #include <cmath>
 #include <cstdlib>
@@ -7,15 +16,18 @@ static constexpr float VIEW_W = 400.f;
 static constexpr float VIEW_H = 225.f;
 static constexpr float PI     = 3.14159265f;
 
+// Rounds coordinate values to prevent pixel misalignment during viewport scaling.
 static inline float rpx(float v) { return std::floor(v + 0.5f); }
+
+// Standard linear interpolation formula.
 static inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-// Random float [0, 1)
+// Generates a random float value in range [0.0, 1.0).
 static inline float rnd() {
     return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
 }
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+// Constructor: Initializes navigation variables, populates lists, builds decoration nodes, and generates first particles.
 MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int startMusicVolume, int startSfxVolume)
     : font(font), screen(MenuScreen::MAIN),
       hasSave(hasSave), mainSel(0),
@@ -26,11 +38,11 @@ MainMenu::MainMenu(sf::Font& font, bool hasSave, bool startFullscreen, int start
 {
     buildMainItems();
     initBgNodes();
-    // Seed a few particles immediately so the background isn't empty on frame 1
+    // Populate screen with particles immediately on creation
     for (int i = 0; i < 18; ++i) spawnParticle();
 }
 
-// ── Item list ─────────────────────────────────────────────────────────────────
+// Rebuilds list of menu row items (selectively showing "Continue" if a save is detected).
 void MainMenu::buildMainItems() {
     mainItems.clear();
     mainItems.push_back("New Game");
@@ -41,26 +53,24 @@ void MainMenu::buildMainItems() {
     mainItems.push_back("Quit");
 }
 
-// ── Background nodes ──────────────────────────────────────────────────────────
+// Hand-tuned coordinates for background node groups to frame the central selection panel nicely.
 void MainMenu::initBgNodes() {
-    // A loose skill-tree graph scattered across the screen.
-    // Positions are hand-tuned so they frame the central panel nicely.
     struct Spec { float x, y, r; };
     static const Spec specs[] = {
-        // Left cluster
+        // Left side coordinates
         { 18.f,  28.f, 5.f }, { 38.f,  55.f, 4.f }, { 14.f,  80.f, 3.f },
         { 52.f,  95.f, 5.f }, { 22.f, 130.f, 4.f }, { 48.f, 158.f, 3.f },
         { 20.f, 175.f, 5.f }, { 60.f, 185.f, 3.f },
-        // Right cluster
+        // Right side coordinates
         { 342.f,  22.f, 4.f }, { 370.f,  50.f, 5.f }, { 352.f,  78.f, 3.f },
         { 385.f, 105.f, 4.f }, { 355.f, 140.f, 5.f }, { 378.f, 165.f, 3.f },
         { 345.f, 188.f, 4.f },
-        // Top / bottom accents
+        // Top and bottom coordinates
         { 120.f,  12.f, 3.f }, { 200.f,   8.f, 4.f }, { 280.f,  14.f, 3.f },
         { 100.f, 210.f, 3.f }, { 200.f, 216.f, 4.f }, { 300.f, 210.f, 3.f },
     };
 
-    // Two accent colors matching the HUD palette
+    // Violets and purples matching HUD colors
     const sf::Color cols[] = {
         sf::Color(80,  50, 130),   // dim violet
         sf::Color(55,  35, 100),   // darker violet
@@ -79,10 +89,9 @@ void MainMenu::initBgNodes() {
     }
 }
 
-// ── Particles ─────────────────────────────────────────────────────────────────
+// Spawns dust particles at screen edges that float inwards.
 void MainMenu::spawnParticle() {
     MenuParticle p;
-    // Spawn along the left or right edge so they drift inward
     bool left = (rnd() < 0.5f);
     p.pos.x   = left ? (rnd() * 80.f) : (VIEW_W - rnd() * 80.f);
     p.pos.y   = rnd() * VIEW_H;
@@ -93,21 +102,22 @@ void MainMenu::spawnParticle() {
     p.life      = p.maxLife;
     p.radius    = 0.4f + rnd() * 1.1f;
 
-    // Particle colors: cool purples / cold whites
+    // Palette variants
     float t = rnd();
     if      (t < 0.3f) p.col = sf::Color(120, 80, 200, 180);
     else if (t < 0.6f) p.col = sf::Color(80, 60, 160, 140);
     else if (t < 0.8f) p.col = sf::Color(200, 180, 255, 100);
-    else               p.col = sf::Color(255, 210,  50, 120);  // occasional gold spark
+    else               p.col = sf::Color(255, 210,  50, 120);  // Gold sparks
 
     particles.push_back(p);
 }
 
-// ── Input ─────────────────────────────────────────────────────────────────────
+// Processes event queues: handles up/down traversal, volume changes, and state requests.
 MenuAction MainMenu::handleEvent(const sf::Event& event) {
     if (event.type != sf::Event::KeyPressed) return MenuAction::NONE;
     const auto key = event.key.code;
 
+    // OPTIONS submenu navigation
     if (screen == MenuScreen::OPTIONS) {
         if (key == sf::Keyboard::W || key == sf::Keyboard::Up)
             optSel = (optSel - 1 + 4) % 4;
@@ -119,7 +129,8 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
             if (optSel == 0) { optFullscreen = !optFullscreen; optChanged = true; }
             else if (optSel == 3) { screen = MenuScreen::MAIN; }
         }
-        // Left/Right adjust volumes on rows 1 and 2
+        
+        // A/D adjust volumes
         auto clamp10 = [](int v, int d) { return std::max(0, std::min(100, v + d * 10)); };
         if (optSel == 1) {
             if (key == sf::Keyboard::Left  || key == sf::Keyboard::A) optMusicVolume = clamp10(optMusicVolume, -1);
@@ -133,13 +144,14 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
         return MenuAction::NONE;
     }
 
+    // MAIN menu navigation
     int n = static_cast<int>(mainItems.size());
     if (key == sf::Keyboard::W || key == sf::Keyboard::Up)
         mainSel = (mainSel - 1 + n) % n;
     if (key == sf::Keyboard::S || key == sf::Keyboard::Down)
         mainSel = (mainSel + 1) % n;
 
-    if (key == sf::Keyboard::E) {
+    if (key == sf::Keyboard::E || key == sf::Keyboard::Return || key == sf::Keyboard::Space) {
         const std::string& s = mainItems[mainSel];
         if (s == "New Game")  return MenuAction::NEW_GAME;
         if (s == "Continue")  return MenuAction::LOAD_GAME;
@@ -150,7 +162,7 @@ MenuAction MainMenu::handleEvent(const sf::Event& event) {
     return MenuAction::NONE;
 }
 
-// ── Draw helpers ──────────────────────────────────────────────────────────────
+// Text resource setup.
 sf::Text MainMenu::makeText(const std::string& str, unsigned size,
                             sf::Color col, float x, float y)
 {
@@ -160,6 +172,7 @@ sf::Text MainMenu::makeText(const std::string& str, unsigned size,
     return t;
 }
 
+// Draws a line connection between two points.
 void MainMenu::drawNodeConnector(sf::RenderWindow& w,
                                   sf::Vector2f a, sf::Vector2f b,
                                   sf::Color col, float thickness)
@@ -177,24 +190,24 @@ void MainMenu::drawNodeConnector(sf::RenderWindow& w,
     w.draw(line);
 }
 
+// Iterates through decorative graph nodes, rendering their links and glowing cores.
 void MainMenu::drawBgNodes(sf::RenderWindow& w) {
-    // Draw connectors first (behind nodes)
-    // Hard-coded edge list matching the spec order in initBgNodes()
+    // Linked indices edges array
     static const int edges[][2] = {
-        // Left
+        // Left group links
         {0,1},{1,2},{1,3},{2,3},{3,4},{4,5},{5,6},{5,7},
-        // Right
+        // Right group links
         {8,9},{9,10},{9,11},{10,11},{11,12},{12,13},{13,14},
-        // Top
+        // Top accent links
         {15,16},{16,17},
-        // Bottom
+        // Bottom accent links
         {18,19},{19,20},
-        // Cross-links left↔top/bottom
+        // Cross links
         {0,15},{6,18},{7,19},
-        // Cross-links right↔top/bottom
         {8,17},{14,20},
     };
 
+    // Draw lines
     for (auto& e : edges) {
         if (e[0] >= static_cast<int>(bgNodes.size()) ||
             e[1] >= static_cast<int>(bgNodes.size())) continue;
@@ -202,8 +215,7 @@ void MainMenu::drawBgNodes(sf::RenderWindow& w) {
         const BgNode& A = bgNodes[e[0]];
         const BgNode& B = bgNodes[e[1]];
 
-        // Connector brightness pulses with the average of the two endpoint pulses
-        float p  = (std::sin(A.pulse) + std::sin(B.pulse)) * 0.25f + 0.5f; // 0..1
+        float p  = (std::sin(A.pulse) + std::sin(B.pulse)) * 0.25f + 0.5f; 
         sf::Color c(
             static_cast<sf::Uint8>(A.col.r * 0.6f),
             static_cast<sf::Uint8>(A.col.g * 0.6f),
@@ -213,12 +225,12 @@ void MainMenu::drawBgNodes(sf::RenderWindow& w) {
         drawNodeConnector(w, A.pos, B.pos, c, 0.7f);
     }
 
-    // Draw nodes
+    // Draw node circles
     for (const BgNode& n : bgNodes) {
-        float glow  = std::sin(n.pulse) * 0.5f + 0.5f;  // 0..1
+        float glow  = std::sin(n.pulse) * 0.5f + 0.5f;
         float r     = n.radius * (0.85f + glow * 0.3f);
 
-        // Outer glow ring
+        // Glow ring
         float gr    = r + 2.5f;
         sf::CircleShape glowCirc(gr);
         glowCirc.setOrigin(gr, gr);
@@ -229,7 +241,7 @@ void MainMenu::drawBgNodes(sf::RenderWindow& w) {
         ));
         w.draw(glowCirc);
 
-        // Core
+        // Solid core
         sf::CircleShape circ(r);
         circ.setOrigin(r, r);
         circ.setPosition(n.pos);
@@ -241,7 +253,7 @@ void MainMenu::drawBgNodes(sf::RenderWindow& w) {
         ));
         w.draw(circ);
 
-        // Bright centre dot
+        // Highlight center
         float cr = r * 0.35f;
         sf::CircleShape centre(cr);
         centre.setOrigin(cr, cr);
@@ -252,6 +264,7 @@ void MainMenu::drawBgNodes(sf::RenderWindow& w) {
     }
 }
 
+// Renders the drifting particles, applying alpha fading based on remaining lifetime.
 void MainMenu::drawParticles(sf::RenderWindow& w) {
     for (const MenuParticle& p : particles) {
         float t   = p.life / p.maxLife;
@@ -265,11 +278,11 @@ void MainMenu::drawParticles(sf::RenderWindow& w) {
     }
 }
 
+// Renders panel windows with customizable outline thicknesses and glow intensities.
 void MainMenu::drawPanel(sf::RenderWindow& w,
                           float px, float py, float pw, float ph,
                           sf::Color fill, sf::Color outline, float glowStrength)
 {
-    // Optional outer glow (drawn as a slightly larger rect with low alpha)
     if (glowStrength > 0.f) {
         float g = 3.f;
         sf::RectangleShape glow({pw + g * 2.f, ph + g * 2.f});
@@ -290,13 +303,13 @@ void MainMenu::drawPanel(sf::RenderWindow& w,
     panel.setPosition(rpx(px), rpx(py));
     w.draw(panel);
 
-    // Inner top highlight line
     sf::RectangleShape topLine({pw - 4.f, 1.f});
     topLine.setFillColor(sf::Color(outline.r, outline.g, outline.b, 40));
     topLine.setPosition(rpx(px + 2.f), rpx(py + 1.f));
     w.draw(topLine);
 }
 
+// Renders a single menu row, adding selecting indicators (side dot and connector line) if highlighted.
 void MainMenu::drawMenuItem(sf::RenderWindow& w,
                              const std::string& label, int idx, bool selected,
                              float panelX, float itemY, float panelW,
@@ -305,7 +318,7 @@ void MainMenu::drawMenuItem(sf::RenderWindow& w,
     const float ITEM_H = 20.f;
 
     if (selected) {
-        // Highlight bar with glow
+        // Selection highlight bar
         float glowAlpha = lerp(28.f, 55.f, selGlow);
         sf::RectangleShape hl({panelW - 6.f, ITEM_H - 2.f});
         hl.setFillColor(sf::Color(
@@ -322,7 +335,7 @@ void MainMenu::drawMenuItem(sf::RenderWindow& w,
         hl.setPosition(rpx(panelX + 3.f), rpx(itemY));
         w.draw(hl);
 
-        // Node connector dot on the left edge — skill-tree flavour
+        // Interactive node dot
         float dotR = 2.5f;
         sf::CircleShape dot(dotR);
         dot.setOrigin(dotR, dotR);
@@ -333,7 +346,7 @@ void MainMenu::drawMenuItem(sf::RenderWindow& w,
         ));
         w.draw(dot);
 
-        // Short connector line from dot into the text area
+        // Interactive node line segment
         drawNodeConnector(w,
             { panelX + 3.f + dotR * 2.f, itemY + ITEM_H * 0.5f - 1.f },
             { panelX + 16.f,              itemY + ITEM_H * 0.5f - 1.f },
@@ -355,17 +368,17 @@ void MainMenu::drawMenuItem(sf::RenderWindow& w,
     w.draw(item);
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
+// Renders the background color, scanlines, drift particles, main title, and current menu screens.
 void MainMenu::render(sf::RenderWindow& window) {
     const float DT = 1.f / 60.f;
     titleTimer  += DT;
     globalTimer += DT;
     selGlow      = std::sin(globalTimer * 3.5f) * 0.5f + 0.5f;
 
-    // ── Update background nodes ───────────────────────────────────────────────
+    // Pulse nodes
     for (BgNode& n : bgNodes) n.pulse += n.pulseSpeed * DT;
 
-    // ── Update particles ──────────────────────────────────────────────────────
+    // Spawn and update particles
     particleSpawnTimer += DT;
     if (particleSpawnTimer > 0.18f) { spawnParticle(); particleSpawnTimer = 0.f; }
 
@@ -379,12 +392,12 @@ void MainMenu::render(sf::RenderWindow& window) {
         particles.end()
     );
 
-    // ── Background ────────────────────────────────────────────────────────────
+    // Draw background
     sf::RectangleShape bg({VIEW_W, VIEW_H});
     bg.setFillColor(sf::Color(6, 8, 16));
     window.draw(bg);
 
-    // Vignette-ish gradient overlay (cheap: two semi-transparent rects at edges)
+    // Side vignette panels
     for (int side = 0; side < 2; ++side) {
         sf::RectangleShape vig({60.f, VIEW_H});
         vig.setFillColor(sf::Color(0, 0, 0, 80));
@@ -392,7 +405,7 @@ void MainMenu::render(sf::RenderWindow& window) {
         window.draw(vig);
     }
 
-    // Subtle horizontal scanlines
+    // Scanline filters
     for (float y = 0.f; y < VIEW_H; y += 3.f) {
         sf::RectangleShape sl({VIEW_W, 1.f});
         sl.setFillColor(sf::Color(0, 0, 0, 18));
@@ -400,17 +413,14 @@ void MainMenu::render(sf::RenderWindow& window) {
         window.draw(sl);
     }
 
-    // ── Draw background skill-tree decoration ─────────────────────────────────
     drawBgNodes(window);
-
-    // ── Draw particles ────────────────────────────────────────────────────────
     drawParticles(window);
 
-    // ── Title ─────────────────────────────────────────────────────────────────
+    // Title rendering
     float bob   = std::sin(titleTimer * 1.4f) * 1.8f;
     float titleY = 18.f + bob;
 
-    // Distant glow behind title
+    // Glow circle behind title
     {
         float gr = 55.f + std::sin(titleTimer * 0.9f) * 5.f;
         sf::CircleShape halo(gr);
@@ -420,14 +430,14 @@ void MainMenu::render(sf::RenderWindow& window) {
         window.draw(halo);
     }
 
-    // Shadow layer
+    // Shadow text
     sf::Text shadow = makeText("PIGEONFALL", 16,
                                sf::Color(0, 0, 0, 160), 0.f, titleY + 2.f);
     float sw = shadow.getLocalBounds().width;
     shadow.setPosition(rpx((VIEW_W - sw) * 0.5f + 2.f), rpx(titleY + 2.f));
     window.draw(shadow);
 
-    // Main title — slight colour pulse
+    // Color pulsing title
     float tp = std::sin(titleTimer * 1.1f) * 0.5f + 0.5f;
     sf::Text title = makeText("PIGEONFALL", 16,
         sf::Color(
@@ -446,14 +456,13 @@ void MainMenu::render(sf::RenderWindow& window) {
     sub.setPosition(rpx((VIEW_W - subw) * 0.5f), rpx(titleY + 18.f));
     window.draw(sub);
 
-    // Thin decorative line under title
+    // Separator line
     float lineY = rpx(titleY + 32.f);
     float lineW = 120.f;
     sf::RectangleShape titleLine({lineW, 1.f});
     titleLine.setFillColor(sf::Color(90, 60, 140, 100));
     titleLine.setPosition(rpx((VIEW_W - lineW) * 0.5f), lineY);
     window.draw(titleLine);
-    // Node dots at each end of the decorative line
     for (int side = 0; side < 2; ++side) {
         float dotR = 1.8f;
         sf::CircleShape dot(dotR);
@@ -466,7 +475,7 @@ void MainMenu::render(sf::RenderWindow& window) {
         window.draw(dot);
     }
 
-    // ── Screen content ────────────────────────────────────────────────────────
+    // MAIN selection screen
     if (screen == MenuScreen::MAIN) {
         const float ITEM_H  = 20.f;
         const float PW      = 148.f;
@@ -474,7 +483,6 @@ void MainMenu::render(sf::RenderWindow& window) {
         const float PX      = rpx((VIEW_W - PW) * 0.5f);
         const float PY      = rpx(VIEW_H * 0.5f - PH * 0.5f + 14.f);
 
-        // Outer glow ring for the panel — pulses with selGlow
         drawPanel(window, PX, PY, PW, PH,
                   sf::Color(9, 9, 20),
                   sf::Color(
@@ -484,7 +492,7 @@ void MainMenu::render(sf::RenderWindow& window) {
                   ),
                   selGlow);
 
-        // Panel corner node accents
+        // Corner node accents
         struct CornerDot { float cx, cy; };
         CornerDot corners[] = {
             { PX,        PY       },
@@ -513,13 +521,14 @@ void MainMenu::render(sf::RenderWindow& window) {
             drawMenuItem(window, mainItems[i], i, sel, PX, iy, PW, dim);
         }
 
-        // Hint
+        // Instructions Hint
         sf::Text hint = makeText("W/S  E=select", 16, sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
         hint.setScale(0.65f, 0.65f);
         float hw = hint.getGlobalBounds().width;
         hint.setPosition(rpx((VIEW_W - hw) * 0.5f), rpx(VIEW_H - 14.f));
         window.draw(hint);
     }
+    // OPTIONS screen
     else if (screen == MenuScreen::OPTIONS) {
         const float PW     = 200.f;
         const float PH     = 90.f;
@@ -535,7 +544,6 @@ void MainMenu::render(sf::RenderWindow& window) {
                   ),
                   selGlow);
 
-        // "OPTIONS" header with node connector decorations
         sf::Text ot = makeText("OPTIONS", 16, sf::Color(
             static_cast<sf::Uint8>(lerp(140.f, 185.f, selGlow)),
             static_cast<sf::Uint8>(lerp(100.f, 140.f, selGlow)),
@@ -545,7 +553,7 @@ void MainMenu::render(sf::RenderWindow& window) {
         ot.setPosition(rpx(PX + PW * 0.5f - otw * 0.5f), rpx(PY + 6.f));
         window.draw(ot);
 
-        // Connector lines flanking "OPTIONS"
+        // Flanking header line accents
         float hdrMidY = rpx(PY + 6.f + 7.f);
         float textLeft  = rpx(PX + PW * 0.5f - otw * 0.5f) - 4.f;
         float textRight = rpx(PX + PW * 0.5f + otw * 0.5f) + 4.f;
@@ -561,7 +569,7 @@ void MainMenu::render(sf::RenderWindow& window) {
             window.draw(d);
         }
 
-        // Rows
+        // Option rows details
         struct Row { std::string label, value; int idx; };
         Row rows[] = {
             { "Fullscreen",    optFullscreen ? "ON" : "OFF",         0 },
@@ -618,6 +626,7 @@ void MainMenu::render(sf::RenderWindow& window) {
             }
         }
 
+        // Option instructions Hint
         sf::Text hint = makeText("E=select  </>/D volume  Q=back", 16,
                                  sf::Color(45, 35, 70), 0.f, VIEW_H - 14.f);
         hint.setScale(0.65f, 0.65f);

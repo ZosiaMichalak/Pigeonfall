@@ -10,9 +10,11 @@ g++ -std=c++17 -DSFML_STATIC `
 #include "AnnoyingDog.h"
 #include <cmath>
 
+// Constructor: Configures fallback shape, explosion visual representation, loads textures, and sets up sprite components.
 AnnoyingDog::AnnoyingDog(float x, float y)
     : GameObject(x, y)
 {
+    // Define the basic fallback circle shape (in case texture assets fail to load)
     shape.setRadius(6.f);
     shape.setOrigin(6.f, 6.f);
     shape.setFillColor(sf::Color(240, 230, 210));
@@ -21,12 +23,14 @@ AnnoyingDog::AnnoyingDog(float x, float y)
     shape.setPosition(position);
     velocity = {0.f, 0.f};
 
+    // Setup the explosion visual overlay (fading orange circle showing blast radius)
     explosionShape.setRadius(BLAST_RADIUS);
     explosionShape.setOrigin(BLAST_RADIUS, BLAST_RADIUS);
     explosionShape.setFillColor(sf::Color(255, 160, 30, 160));
     explosionShape.setOutlineThickness(2.f);
     explosionShape.setOutlineColor(sf::Color(255, 80, 0, 200));
 
+    // Attempt to load walking and explosion animation spritesheets
     bool walkOk = texWalk.loadFromFile("assets/Dog_walk.png");
     bool boomOk = texBoom.loadFromFile("assets/Dog_boom.png");
 
@@ -41,9 +45,11 @@ AnnoyingDog::AnnoyingDog(float x, float y)
     }
 }
 
+// Updates the dog's state machine (movement, animation progress, explosion fade/timers).
 void AnnoyingDog::update(float dt, sf::RenderWindow& /*window*/) {
     if (!isActive()) return;
 
+    // State 1: EXPLODING - Dog has detoned; fade out the explosion visual and destroy the entity.
     if (state == DogState::EXPLODING) {
         windupTimer -= dt;
         float alpha = std::max(0.f, windupTimer / 0.3f);
@@ -53,15 +59,17 @@ void AnnoyingDog::update(float dt, sf::RenderWindow& /*window*/) {
         return;
     }
 
+    // State 2: WINDUP - Preparing to detonate. Stop moving and cycle through the fuse animation frames.
     if (state == DogState::WINDUP) {
         windupTimer -= dt;
-        // Advance boom animation
+        
         animTimer += dt;
         float frameDur = WINDUP_DURATION / BOOM_FRAMES;
         if (animTimer >= frameDur) {
             animTimer -= frameDur;
             if (animFrame < BOOM_FRAMES - 1) animFrame++;
         }
+        
         if (hasSprite && texBoom.getSize().x > 0) {
             int col = animFrame % 3;
             int row = animFrame / 3;
@@ -73,16 +81,17 @@ void AnnoyingDog::update(float dt, sf::RenderWindow& /*window*/) {
         return;
     }
 
-    // WALK — move toward cached target direction, steer each frame via tryExplode
+    // State 3: WALK - Actively tracking and walking towards the nearest enemy target.
     position += velocity * dt;
     shape.setPosition(position);
 
-    // Advance walk animation
+    // Cycle through standard run/walk frames
     animTimer += dt;
     if (animTimer >= WALK_DUR) {
         animTimer -= WALK_DUR;
         animFrame = (animFrame + 1) % WALK_FRAMES;
     }
+    
     if (hasSprite && texWalk.getSize().x > 0) {
         int col = animFrame % 2;
         int row = animFrame / 2;
@@ -94,6 +103,7 @@ void AnnoyingDog::update(float dt, sf::RenderWindow& /*window*/) {
     }
 }
 
+// Renders the appropriate component (dog sprite, fallback circle, or active explosion wave).
 void AnnoyingDog::draw(sf::RenderWindow& window) {
     if (!isActive()) return;
 
@@ -109,18 +119,19 @@ void AnnoyingDog::draw(sf::RenderWindow& window) {
     }
 }
 
+// State transition handler and targeting AI: tracks nearest enemy and triggers explosion calculations.
 bool AnnoyingDog::tryExplode(std::vector<std::unique_ptr<GameObject>>& objects,
                                std::vector<std::unique_ptr<GameObject>>& /*spawnQueue*/) {
     if (!isActive()) return false;
     if (state == DogState::EXPLODING) return false;
 
-    // Wind-up finished — apply damage and start explosion flash
+    // Trigger the actual explosion when the windup timer reaches zero.
     if (state == DogState::WINDUP && windupTimer <= 0.f) {
         state       = DogState::EXPLODING;
-        windupTimer = 0.3f;
+        windupTimer = 0.3f; // Explosion visual lingers for 0.3 seconds
         explosionShape.setPosition(position);
 
-        // Find and kill nearest enemy, area damage to the rest
+        // Scan game objects to identify the nearest enemy to eliminate first
         Enemy* target = nullptr;
         float  minDist = 9999.f;
         for (auto& obj : objects) {
@@ -132,6 +143,8 @@ bool AnnoyingDog::tryExplode(std::vector<std::unique_ptr<GameObject>>& objects,
             float d  = std::sqrt(dx*dx + dy*dy);
             if (d < minDist) { minDist = d; target = e; }
         }
+        
+        // Inflict massive single-target damage to primary target, and half-HP damage to nearby splash targets
         if (target) {
             target->takeDamage(9999);
             for (auto& obj : objects) {
@@ -147,7 +160,7 @@ bool AnnoyingDog::tryExplode(std::vector<std::unique_ptr<GameObject>>& objects,
         return true;
     }
 
-    // Still walking — steer toward nearest enemy each frame
+    // Standard behavior: find target and steer or begin winding up.
     if (state == DogState::WALK) {
         Enemy* target = nullptr;
         float  minDist = 9999.f;
@@ -161,21 +174,24 @@ bool AnnoyingDog::tryExplode(std::vector<std::unique_ptr<GameObject>>& objects,
             if (d < minDist) { minDist = d; target = e; }
         }
 
+        // If no active enemies are found, clean up the dog
         if (!target) { destroy(); return false; }
 
+        // Determine direction to target
         sf::FloatRect eb = target->getBounds();
         sf::Vector2f  ec = {eb.left + eb.width / 2.f, eb.top + eb.height / 2.f};
         sf::Vector2f  dir = ec - position;
         float len = std::sqrt(dir.x*dir.x + dir.y*dir.y);
 
         if (len < HIT_DIST + 6.f) {
-            // Close enough — start wind-up
+            // Dog has reached target; transition to windup and start ticking down the fuse
             state       = DogState::WINDUP;
             windupTimer = WINDUP_DURATION;
             velocity    = {0.f, 0.f};
             animFrame   = 0;
             animTimer   = 0.f;
         } else if (len > 0.f) {
+            // Keep running towards the target enemy
             facingLeft = dir.x < 0.f;
             velocity   = (dir / len) * SPEED;
         }
@@ -183,3 +199,4 @@ bool AnnoyingDog::tryExplode(std::vector<std::unique_ptr<GameObject>>& objects,
 
     return false;
 }
+

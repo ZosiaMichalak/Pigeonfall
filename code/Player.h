@@ -1,3 +1,12 @@
+/*
+g++ -std=c++17 -DSFML_STATIC `
+  code\*.cpp `
+  -I SFML-2.5.1\include `
+  -L SFML-2.5.1\lib `
+  -o Gra.exe `
+  -lsfml-graphics-s -lsfml-window-s -lsfml-audio-s -lsfml-system-s `
+  -lopengl32 -lwinmm -lgdi32 -lfreetype -lopenal32 -lflac -lvorbisenc -lvorbisfile -lvorbis -logg
+*/
 #ifndef PLAYER_H
 #define PLAYER_H
 
@@ -6,16 +15,18 @@
 #include <array>
 #include <string>
 
-
+// Enum representing the active animation state of the player character.
 enum class AnimState { IDLE, WALK, DASH, ATTACK, DIE };
 
-// ── Skill tree ────────────────────────────────────────────────────────────────
+// Structure containing information about a single skill tree upgrade node.
 struct SkillDef {
-    std::string name;
-    int         maxLevel;
+    std::string name;     // Name of the skill (e.g. "SPEED")
+    int         maxLevel; // Max upgrade tier allowed
 };
 
 static constexpr int SKILL_COUNT = 6;
+
+// Identifiers for individual skills in the upgrades array.
 enum SkillID {
     SK_SPEED         = 0,
     SK_HEALTH        = 1,
@@ -25,6 +36,7 @@ enum SkillID {
     SK_SECOND_CHANCE = 5
 };
 
+// Skill parameters definition catalogue.
 static const SkillDef SKILL_DEFS[SKILL_COUNT] = {
     { "SPEED",       5 },
     { "HEALTH",      5 },
@@ -34,10 +46,10 @@ static const SkillDef SKILL_DEFS[SKILL_COUNT] = {
     { "2ND CHANCE",  1 }
 };
 
-// ── Player ────────────────────────────────────────────────────────────────────
+// Player class representing the main playable character: manages player movement, sword slashes, dash mechanics, leveling, and held items.
 class Player : public GameObject {
 private:
-    // Statyczne dane trwałe między uruchomieniami/pokojami
+    // Static player statistics preserved across room changes
     static int                          persistentXP;
     static int                          persistentLevel;
     static int                          persistentSkillPoints;
@@ -47,7 +59,7 @@ private:
     static int                          persistentTotemCharges;
     static bool                         persistentTotemBoughtThisRun;
 
-    // Dane bieżącej instancji gracza
+    // Local stats of the current player instance
     int xp;
     int level;
     int skillPoints;
@@ -70,13 +82,13 @@ private:
     bool isDashing;
     
     bool  isDead;
-    bool  facingLeft;
+    bool  facingLeft;             // Direction scale helper
     float baseSpeed;
     float speed;
     float animationTimer;
     float frameDuration;
     AnimState currentAnim;
-    sf::Vector2f dashDir;
+    sf::Vector2f dashDir;         // Movement direction during dash
     float dashTimer;
     float dashDuration;
     float monsterBuffBaseSpeed;
@@ -87,30 +99,30 @@ private:
     int   slashFrameWidth;
     int   slashFrameHeight;
 
-    // ── Combo tracking ────────────────────────────────────────────────────────
-    int   comboCount;            // 0..3 — enemy hits in current combo (damage)
-    int   comboSwingCount;       // 0..3 — consecutive swings (hits or air)
-    float comboWindowTimer;      // time left before combo chain resets
-    float comboLockoutTimer;     // 0.1s pause after 3 swings in a row
-    bool  hitConnectedThisSwing; // true once per attack swing when an enemy is hit
+    // Combat combo variables
+    int   comboCount;            // Current hit index in slash chain (0..3)
+    int   comboSwingCount;       // Number of swings made in rapid succession
+    float comboWindowTimer;      // Time remaining before combo damage resets
+    float comboLockoutTimer;     // Short pause period after finishing a 3-swing chain
+    bool  hitConnectedThisSwing; // Ensures damage is applied only once per sword swing
 
-    // Tekstury i sprite'y SFML
-    // ── Held-item overlay textures ────────────────────────────────────────────
-    // Loaded lazily when the held item changes
+    // Held item graphics and overlays
     sf::Texture textureHeldIdle;
     sf::Texture textureHeldWalk;
     bool        hasHeldIdle  = false;
     bool        hasHeldWalk  = false;
     std::string loadedHeldItem;
-    int         monsterVariant = 0;
+    int         monsterVariant = 0;   // Chosen variant flavor of the Monster Energy item
     bool        monsterWalkLocked = false;
 
-    // Dedicated monster-mode animation (player_monsterMode.png)
+    // Monster power-up state sprites sheet
     sf::Texture textureMonsterMode;
     bool        hasMonsterModeTexture = false;
 
+    // Preloads overlay sprites when switching active items
     void loadHeldTextures(const std::string& item);
 
+    // Core character sprite resource sheets
     sf::Texture textureIdle;
     sf::Texture textureWalk;
     sf::Texture textureAttack;
@@ -122,6 +134,7 @@ private:
     sf::IntRect currentFrame;
     sf::RectangleShape fallbackShape;
 
+    // Spritesheet dimension parameters
     int currentColumn;
     int maxColumns;
     int sheetCols;
@@ -142,26 +155,32 @@ private:
     int slashMaxFrames;
     int slashCols;
 
-    sf::RectangleShape swordHitbox;
+    sf::RectangleShape swordHitbox; // Custom rectangular outline to test sword collisions
 
-    // Prywatne metody pomocnicze
+    // Math/Logic helper overrides
     void applyFacingScale();
     void applySkillStats();
     void setAnim(AnimState anim);
     void updateAttack(float dt, sf::RenderWindow& window);
 
 public:
+    // Constructor: loads sprite sheets, resets stats, and positions character
     Player(float x, float y);
 
+    // Updates animation clocks, checks inputs, applies movement vectors, and handles slash combos each frame
     void update(float dt, sf::RenderWindow& window) override;
+    
+    // Renders the character, active weapon overlay, and slash sword effects
     void draw(sf::RenderWindow& window) override;
     
+    // Initiates dash movement
     void startDash(sf::Vector2f moveDir);
 
-    // Gettery i metody pomocnicze
+    // Collision boundaries getters
     sf::FloatRect getSwordBounds() const { return swordHitbox.getGlobalBounds(); }
     int           getComboHitDamage() const { return attackDamage; }
-    // Called when sword actually hits an enemy; returns damage for this hit
+    
+    // Registers a hit during active swing, modifying combo chains and returning scaled damage
     int           registerHit();
     int           getComboCount() const { return comboCount; }
     bool          hasHitThisSwing() const { return hitConnectedThisSwing; }
@@ -174,6 +193,7 @@ public:
     sf::FloatRect getBounds()                    const;
     void          setPosition(const sf::Vector2f& p);
 
+    // Stat getters
     int  getHp()                 const { return hp; }
     int  getMaxHp()              const { return maxHp; }
     void addXP(int amount);
@@ -182,6 +202,8 @@ public:
     int  getLevel()              const { return level; }
     int  getSkillPoints()        const { return skillPoints; }
     int  getUpgradeLevel(int id) const { return upgradeLevels[id]; }
+    
+    // Upgrades tree logic check/buy
     bool canBuySkill(int id)     const;
     void buySkill(int id);
     bool isSecondChanceUsed()    const { return persistentSecondChanceUsed; }
@@ -190,23 +212,33 @@ public:
     void markTotemPurchased();
     void addTotemCharge();
 
+    // Consumable item actions
     void  applyMonsterBuff();
     void  assignRandomMonsterEnergyVariant();
     int   getMonsterEnergyVariant() const { return monsterVariant; }
-    void  setHeldItem(const std::string& item); // call whenever heldItem changes
+    void  setHeldItem(const std::string& item);
     void  healFull();
     bool  hasMonsterBuff()       const { return monsterBuffTimer > 0.f; }
     
+    // Death sequence controls
     bool isDeadNow() const { return isDead; }
     void startDeathAnimation();
     void updateDeathAnimation(float dt);
+    
     bool isAttackingNow() const { return isAttacking; }
     bool isDashingNow() const { return isDashing; }
     bool isMonsterOneHit() const { return monsterOneHitKill; }
+    
+    // Applies damage and updates invincibility cooldowns
     void takeDamage(int amount);
+    
+    // Attempts to trigger second chance revive, returning true if successful
     bool consumeSecondChance();
+    
+    // Resets active run-bound items (totems, coins, items)
     static void resetRunStats();
-    // Clears XP, skills, and level — call before new game or when loading a save slot
+    
+    // Clears permanent level progression data (called before starting a new game)
     static void resetProgression();
 };
 

@@ -1,3 +1,12 @@
+/*
+g++ -std=c++17 -DSFML_STATIC `
+  code\*.cpp `
+  -I SFML-2.5.1\include `
+  -L SFML-2.5.1\lib `
+  -o Gra.exe `
+  -lsfml-graphics-s -lsfml-window-s -lsfml-audio-s -lsfml-system-s `
+  -lopengl32 -lwinmm -lgdi32 -lfreetype -lopenal32 -lflac -lvorbisenc -lvorbisfile -lvorbis -logg
+*/
 #include "SkillTreeUI.h"
 #include "Player.h"
 #include <cmath>
@@ -5,33 +14,40 @@
 static constexpr float VIEW_W = 400.f;
 static constexpr float VIEW_H = 225.f;
 
+// Helper function rounding coordinates to prevent blur.
 static inline float px(float v) { return std::round(v); }
 
+// Configures font texture settings for clear pixel reading.
 static void sharpFont(sf::Font& font) {
     const_cast<sf::Texture&>(font.getTexture(16)).setSmooth(false);
 }
 
+// Constructor: Initializes navigation variables and closed visibility flag.
 SkillTreeUI::SkillTreeUI(sf::Font& font)
     : font(font), open(false), selectedSkill(0)
 {}
 
+// Increments/decrements cursor selection index, wrapping around using modulo.
 void SkillTreeUI::moveSelection(int delta) {
     selectedSkill = (selectedSkill + SKILL_COUNT + delta) % SKILL_COUNT;
 }
 
+// Triggers selected upgrade level purchase logic in Player.
 void SkillTreeUI::buySelected(Player* player) {
     if (player) player->buySkill(selectedSkill);
 }
 
+// Renders the background dim, panel box container, headers, SP levels, individual upgrade rows, current levels (as small box meters), and footer hints.
 void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
     if (!p) return;
     sharpFont(font);
 
+    // Dim screen background overlay
     sf::RectangleShape overlay({VIEW_W, VIEW_H});
     overlay.setFillColor(sf::Color(0, 0, 0, 160));
     window.draw(overlay);
 
-    const float ROW_H  = 22.f; // Powiększone rzędy by zmieścić font 16
+    const float ROW_H  = 22.f; 
     const float HEADER = 30.f;
     const float FOOTER = 20.f;
     const float pw     = 250.f;
@@ -39,6 +55,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
     const float panelX = px((VIEW_W - pw) / 2.f);
     const float panelY = px((VIEW_H - ph) / 2.f);
 
+    // Main translucent overlay panel
     sf::RectangleShape panel({pw, ph});
     panel.setFillColor(sf::Color(12, 12, 20));
     panel.setOutlineThickness(1.f);
@@ -46,6 +63,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
     panel.setPosition(panelX, panelY);
     window.draw(panel);
 
+    // Panel Header label
     sf::Text title("SKILL TREE", font, 16);
     title.setFillColor(sf::Color(170, 130, 255));
     title.setPosition(
@@ -53,6 +71,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
         px(panelY + 6.f));
     window.draw(title);
 
+    // Unspent Skill Points (SP) count label
     sf::Text spLabel("SP: " + std::to_string(p->getSkillPoints()), font, 16);
     spLabel.setFillColor(sf::Color(255, 215, 50));
     spLabel.setPosition(
@@ -62,12 +81,14 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
 
     const float startY = panelY + HEADER;
 
+    // Draw individual upgrade rows
     for (int i = 0; i < SKILL_COUNT; ++i) {
         float ry     = px(startY + i * ROW_H);
         bool  sel    = (i == selectedSkill);
         bool  maxed  = (p->getUpgradeLevel(i) >= SKILL_DEFS[i].maxLevel);
         bool  canBuy = p->canBuySkill(i);
 
+        // Highlight active cursor row
         if (sel) {
             sf::RectangleShape rowBg({pw - 6.f, ROW_H - 2.f});
             rowBg.setFillColor(sf::Color(38, 28, 65));
@@ -77,6 +98,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
             window.draw(rowBg);
         }
 
+        // Draw cursor arrow marker
         if (sel) {
             sf::Text arr(">", font, 16);
             arr.setFillColor(sf::Color(255, 215, 50));
@@ -84,6 +106,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
             window.draw(arr);
         }
 
+        // Upgrade name label (greying it out if not purchasable)
         sf::Text nameT(SKILL_DEFS[i].name, font, 16);
         nameT.setFillColor(maxed  ? sf::Color(90, 190, 90)
                          : canBuy ? sf::Color(215, 215, 215)
@@ -91,9 +114,9 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
         nameT.setPosition(px(panelX + 18.f), px(ry));
         window.draw(nameT);
 
-        // ── Obliczanie układu prawej strony (Od prawej do lewej) ──────────────
         float rightEdge = panelX + pw - 6.f;
 
+        // Render status tag (MAX, BUY, or NO SP)
         sf::Text statusT("", font, 16);
         if (maxed) {
             statusT.setString("MAX");
@@ -113,13 +136,15 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
 
         int   maxLv   = SKILL_DEFS[i].maxLevel;
         int   curLv   = p->getUpgradeLevel(i);
-        float pipSize = 8.f; // Lekko większe by pasowały do rozmiaru 16
+        float pipSize = 8.f; 
         
         float pipTotalW = maxLv * (pipSize + 2.f);
         float pipStartX = rightEdge - pipTotalW;
 
+        // Render skill level indicators (pips)
         for (int j = 0; j < maxLv; ++j) {
             sf::RectangleShape pip({pipSize, pipSize});
+            // Highlight purchased pips purple, remaining slots dark blue
             pip.setFillColor(j < curLv ? sf::Color(110, 70, 210) : sf::Color(30, 26, 50));
             pip.setOutlineThickness(0.5f);
             pip.setOutlineColor(sf::Color(70, 55, 120));
@@ -128,6 +153,7 @@ void SkillTreeUI::render(sf::RenderWindow& window, Player* p) {
         }
     }
 
+    // Controls footer hints
     sf::Text hint("W/S  E=buy  Tab/Q=close", font, 16);
     hint.setFillColor(sf::Color(90, 80, 125));
     hint.setPosition(
