@@ -47,7 +47,7 @@ static void formatPlayTime(float seconds, char* buf, std::size_t bufSize) {
 
 // Determines the boss difficulty tier based on the room index (strong for final, weak for mid-boss).
 static PigeonBossTier bossTierForRoom(int roomIndex) {
-    return roomIndex == 50 ? PigeonBossTier::STRONG : PigeonBossTier::WEAK;
+    return PigeonBossTier::STRONG; // Only one boss in room 10, always strong tier
 }
 
 // Calculates dynamic coin reward drops using active difficulty settings.
@@ -366,7 +366,7 @@ void Game::drawSpawnEffects() {
 }
 
 bool Game::isBossRoomIndex(int roomIndex) const {
-    return roomIndex == BOSS_ROOM_WEAK || roomIndex == BOSS_ROOM_STRONG;
+    return roomIndex == BOSS_ROOM;
 }
 
 int Game::enemiesForRoom(int roomIndex) const {
@@ -1358,7 +1358,7 @@ void Game::update(float dt) {
     rooms[currentRoomIndex]->setCleared(cleared);
 
     if (appState == AppState::PLAYING &&
-        currentRoomIndex == BOSS_ROOM_STRONG && isBossRoom && cleared) {
+        currentRoomIndex == BOSS_ROOM && isBossRoom && cleared) {
         appState  = AppState::VICTORY_PENDING;
         fadeTimer = 0.f;
         isPaused  = false;
@@ -1419,7 +1419,7 @@ void Game::update(float dt) {
     }
 
     // ── Door interaction (no exit after final boss — victory screen instead) ───
-    if (currentRoomIndex < BOSS_ROOM_STRONG &&
+    if (currentRoomIndex < BOSS_ROOM &&
         !nearVending && rooms[currentRoomIndex]->getIsCleared() && playerPtr) {
         doorShape.setPosition(rooms[currentRoomIndex]->getDoorPosition());
         if (playerPtr->getBounds().intersects(doorShape.getGlobalBounds())) {

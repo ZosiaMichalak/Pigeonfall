@@ -385,7 +385,11 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
             waveZones.end());
 
         // ── Schedule next zone ────────────────────────────────────────────────────
-        waveTimer -= dt;
+        // Only count down to next wave when all previous zones are fully gone
+        bool anyZoneAlive = !waveZones.empty();
+        if (!anyZoneAlive) {
+            waveTimer -= dt;
+        }
         if (waveTimer <= 0.f && wavesRemaining > 0) {
             // Target the quadrant/half currently occupied by the player
             float dx = playerPos.x - 200.f;
@@ -415,7 +419,7 @@ void PigeonKing::updateAI(float dt, sf::Vector2f playerPos,
             waveZones.push_back(std::move(z));
 
             --wavesRemaining;
-            waveTimer = (warnDuration + 0.55f) * wavePaceScale;
+            waveTimer = 0.2f; // 0.2s gap AFTER previous zone fully disappears before next spawns
 
             // When all waves are discharged, stagger the boss into a vulnerable stun state
             if (wavesRemaining <= 0) {

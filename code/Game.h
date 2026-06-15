@@ -86,8 +86,7 @@ private:
     float playTime   = 0.f;       // Total time elapsed in the current play session
     int   deathCount = 0;         // Number of player deaths tracked
 
-    static constexpr int BOSS_ROOM_WEAK   = 10; // First boss room index
-    static constexpr int BOSS_ROOM_STRONG = 50; // Second boss room index
+    static constexpr int BOSS_ROOM = 10; // Single boss room index — ends the run
 
     // Helper utilities to sync volume levels
     void applyMusicVolume();
