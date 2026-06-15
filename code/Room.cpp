@@ -124,7 +124,108 @@ std::vector<RoomTemplate> getAll() {
             },
             {190.2f, 180.9f}, 270.0f,
             {188.2f, 90.5f}
-        }
+        },
+                // ── 3 ──
+        {
+            "3", 0,
+            {
+            {PropDef::Type::BENCH, {16.0f, 16.0f}},
+            {PropDef::Type::BENCH, {96.0f, 16.0f}},
+            {PropDef::Type::TRASH, {56.0f, 16.0f}},
+            {PropDef::Type::VENDING, {224.0f, 8.0f}},
+            {PropDef::Type::FLOWERS, {120.0f, 112.0f}},
+            {PropDef::Type::FLOWERS, {56.0f, 112.0f}},
+            {PropDef::Type::CAR1, {320.0f, 144.0f}},
+        },
+            {376.0f, 88.0f}, 90.0f,
+            {192.0f, 96.0f}
+        },
+        // ── 4 ──
+        {
+            "4", 1,
+            {
+            {PropDef::Type::VENDING, {344.0f, 8.0f}},
+            {PropDef::Type::CAR2, {320.0f, 136.0f}},
+            {PropDef::Type::CAR3, {320.0f, 96.0f}},
+            {PropDef::Type::HYDRANT, {200.0f, 32.0f}},
+        },
+            {192.0f, 176.0f}, 90.0f,
+            {192.0f, 88.0f}
+        },
+        // ── 5 ──
+        {
+            "5", 2,
+            {
+            {PropDef::Type::CAR3, {0.0f, 136.0f}},
+            {PropDef::Type::CAR2, {0.0f, 96.0f}},
+            {PropDef::Type::CAR1, {0.0f, 56.0f}},
+            {PropDef::Type::TRASH, {288.0f, 16.0f}},
+            {PropDef::Type::BENCH, {256.0f, 16.0f}},
+        },
+            {368.0f, 88.0f}, 90.0f,
+            {208.0f, 80.0f}
+        },
+        // ── 6 ──
+        {
+            "6", 3,
+            {
+            {PropDef::Type::BENCH, {80.0f, 24.0f}},
+            {PropDef::Type::BENCH, {144.0f, 24.0f}},
+            {PropDef::Type::BENCH, {208.0f, 24.0f}},
+            {PropDef::Type::TRASH, {112.0f, 24.0f}},
+            {PropDef::Type::TRASH, {176.0f, 24.0f}},
+            {PropDef::Type::VENDING, {248.0f, 8.0f}},
+            {PropDef::Type::CAR2, {312.0f, 144.0f}},
+            {PropDef::Type::CAR2, {216.0f, 144.0f}},
+        },
+            {32.0f, 120.0f}, 90.0f,
+            {264.0f, 120.0f}
+        },
+        // ── 7 ──
+        {
+            "7", 4,
+            {
+            {PropDef::Type::HYDRANT, {128.0f, 120.0f}},
+            {PropDef::Type::HYDRANT, {232.0f, 120.0f}},
+            {PropDef::Type::CAR3, {312.0f, 8.0f}},
+            {PropDef::Type::CAR3, {224.0f, 8.0f}},
+            {PropDef::Type::CAR2, {152.0f, 8.0f}},
+            {PropDef::Type::CAR1, {72.0f, 8.0f}},
+            {PropDef::Type::CAR2, {0.0f, 8.0f}},
+            {PropDef::Type::VENDING, {8.0f, 112.0f}},
+        },
+            {192.0f, 176.0f}, 90.0f,
+            {192.0f, 80.0f}
+        },
+        // ── 8 ──
+        {
+            "8", 4,
+            {
+            {PropDef::Type::VENDING, {224.0f, 112.0f}},
+            {PropDef::Type::VENDING, {104.0f, 112.0f}},
+            {PropDef::Type::BENCH, {72.0f, 128.0f}},
+            {PropDef::Type::BENCH, {272.0f, 128.0f}},
+            {PropDef::Type::CAR2, {0.0f, 8.0f}},
+            {PropDef::Type::TRASH, {296.0f, 16.0f}},
+        },
+            {368.0f, 88.0f}, 90.0f,
+            {48.0f, 88.0f}
+        },
+        // ── 9 ──
+        {
+            "9", 3,
+            {
+            {PropDef::Type::CAR2, {56.0f, 0.0f}},
+            {PropDef::Type::CAR2, {128.0f, 0.0f}},
+            {PropDef::Type::CAR3, {128.0f, 32.0f}},
+            {PropDef::Type::CAR1, {56.0f, 32.0f}},
+            {PropDef::Type::VENDING, {344.0f, 136.0f}},
+            {PropDef::Type::FLOWERS, {200.0f, 16.0f}},
+        },
+            {32.0f, 120.0f}, 90.0f,
+            {312.0f, 120.0f}
+        },
+
     };      
 }
 
